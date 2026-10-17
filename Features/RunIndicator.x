@@ -1,19 +1,13 @@
-// Features_RunIndicator.x — APP 运行指示点（移植自 SystemX runIndicatorEnabled）
-// SystemX 原版语义（设置面板原文）：「当 APP 在前台运行时，APP 的名字会替换为一个指示点，
-// 代表当前 APP 正在运行中。」
+// Features_RunIndicator.x — APP 运行指示点
 //
-// 设计原则（老板要求：全部事件驱动、不许常驻占 CPU）：
-//   • 触发点只有两个：① 系统标签更新回调 iconViewDisplaysLabel:；② 进程启动/退出事件。
-//   • **不再 hook layoutSubviews**（那是每帧调用）。圆点位置交给 Auto Layout 约束，一次设定永久生效。
-//   • 无定时器、无轮询；运行判定只在上述事件里做一次 FBProcessManager 查询。
-//
-// 其它要点：
-//  1) 名称隐藏 = labelView.hidden（公开 API），不碰 setLabelHidden:（参数类型不明）；
-//  2) 圆点 8pt，颜色 = 电池充电绿（systemGreen #34C759）；
-//  3) 只画在真正位于图标列表里的图标视图上（superview 链含 IconList/Dock），排除过渡代理视图；
-//  4) 系统自带的小圆点 SBIconDotLabelAccessoryView（约 4-5pt）在功能开启时一律隐藏，
-//     避免「两个点、大小不一样」；
-//  5) 诊断日志 /var/mobile/Library/Preferences/systemPro.log（mobile 可写）。
+// 设计原则：全部事件驱动、不占 CPU。
+//   • 触发点：① 系统标签更新回调 iconViewDisplaysLabel:；② 视图进窗口/换父视图；
+//     ③ 进程启动退出事件（dispatch 主队列，合并防抖）。
+//   • 无 layoutSubviews 钩子（那是每帧）、无定时器、无轮询。
+//   • 圆点位置交给 Auto Layout 约束（一次设定）：首页锚 labelView 中心（与文字同线），
+//     Dock 放图标正下方。
+//   • 运行判定：FBProcessManager（进程内字典查询，无 IPC）。
+//   • 性能：类查找缓存；每次 apply 只做一次进程查询；诊断由 SP_ENABLE_DIAG 控制（默认关）。
 #import "../Common.h"
 #import "../PrivateHeaders.h"
 #import "../Prefs.h"
@@ -29,10 +23,22 @@ static const void *kSPDotKey       = &kSPDotKey;
 static const void *kSPHidLabelKey  = &kSPHidLabelKey;
 static NSHashTable *gSPIconViews   = nil;
 
-static const CGFloat SP_DOT_SIZE = 8.0;               // 直径 8pt（10pt 实测偏大，减 2pt）
+static const CGFloat SP_DOT_SIZE = 8.0;
 
 static UIColor *SPRunDotColor(void) {
-    return [UIColor systemGreenColor];                // 老板指定：电池充电绿
+    return [UIColor systemGreenColor];                // 电池充电绿
+}
+
+// 类缓存（热路径）
+static Class SPSBIconViewClass(void) {
+    static Class c = Nil; static dispatch_once_t o;
+    dispatch_once(&o, ^{ c = NSClassFromString(@"SBIconView"); });
+    return c;
+}
+static Class SPProcessManagerClass(void) {
+    static Class c = Nil; static dispatch_once_t o;
+    dispatch_once(&o, ^{ c = NSClassFromString(@"FBProcessManager"); });
+    return c;
 }
 
 static UIView *SPRunLabelView(SBIconView *iconView) {
@@ -67,14 +73,12 @@ static NSString *SPRunIndicatorBundleID(SBIconView *iconView) {
 
 static BOOL SPRunIndicatorAppIsRunning(NSString *bid) {
     if (!bid.length) return NO;
-    static Class gMgr = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ gMgr = NSClassFromString(@"FBProcessManager"); });
-    if (!gMgr) return NO;
+    Class mgrClass = SPProcessManagerClass();
+    if (!mgrClass) return NO;
     @try {
         SEL sharedSel = @selector(sharedInstance);
-        if (![gMgr respondsToSelector:sharedSel]) return NO;
-        id inst = ((id (*)(id, SEL))objc_msgSend)(gMgr, sharedSel);
+        if (![mgrClass respondsToSelector:sharedSel]) return NO;
+        id inst = ((id (*)(id, SEL))objc_msgSend)(mgrClass, sharedSel);
         if (!inst) return NO;
         SEL sel = @selector(processesForBundleIdentifier:);
         if (![inst respondsToSelector:sel]) return NO;
@@ -89,55 +93,7 @@ static BOOL SPRunIndicatorActiveForView(SBIconView *iconView) {
     return SPRunIndicatorAppIsRunning(SPRunIndicatorBundleID(iconView));
 }
 
-// 诊断：只在「状态签名」变化时记一条（不刷屏）。
-// 记录 apply 结束后的真实现场：superview、bounds、以及所有点状子视图的类名/尺寸/隐藏态。
-// 读法（SSH 真实根前缀）：/rootfs/var/mobile/Library/Logs/systemPro.log
-static void SPRunDotDiagState(SBIconView *iconView, NSString *phase) {
-    static NSMutableDictionary *lastSig = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ lastSig = [NSMutableDictionary dictionary]; });
-
-    NSMutableString *line = [NSMutableString stringWithFormat:@"%@ icon=%@ super=%@ bounds=%@ tf=%@",
-                             phase,
-                             NSStringFromClass([iconView class]),
-                             iconView.superview ? NSStringFromClass([iconView.superview class]) : @"(nil)",
-                             NSStringFromCGRect(iconView.bounds),
-                             NSStringFromCGAffineTransform(iconView.transform)];
-    NSInteger n = 0;
-    for (UIView *sv in iconView.subviews) {
-        NSString *cn = NSStringFromClass([sv class]);
-        CGRect f = sv.frame;
-        BOOL small = (f.size.width > 0 && f.size.width <= 14.0) || (f.size.height > 0 && f.size.height <= 14.0);
-        if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] ||
-            [cn containsString:@"Accessory"] || small) {
-            // 指纹：背景色 / 圆角 / tag —— 不同插件画点时特征不同，用来锁定归属
-            UIColor *bg = sv.backgroundColor;
-            CGFloat cr = sv.layer.cornerRadius;
-            [line appendFormat:@" [%@ %@ bg=%@ r=%.1f tag=%ld%@%@]", cn, NSStringFromCGRect(f),
-                               bg ? [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%.2f",
-                                     CGColorGetComponents(bg.CGColor)[0],
-                                     CGColorGetComponents(bg.CGColor)[1],
-                                     CGColorGetComponents(bg.CGColor)[2],
-                                     CGColorGetNumberOfComponents(bg.CGColor) > 3 ? CGColorGetComponents(bg.CGColor)[3] : 1.0] : @"nil",
-                               cr, (long)sv.tag,
-                               sv.hidden ? @" hidden" : @"", sv.superview == iconView ? @"" : @" detached"];
-            n++;
-        }
-    }
-    NSString *sig = [NSString stringWithFormat:@"%@|%ld", line, (long)n];
-    NSString *key = [NSString stringWithFormat:@"%p", iconView];
-    @synchronized (lastSig) {
-        if ([lastSig[key] isEqualToString:sig]) return;
-        lastSig[key] = sig;
-    }
-    SPDiagLog(line);
-}
-
-// 把圆点装到图标视图上。
-// 位置策略（老板实测校准）：
-//   • 首页/文件夹图标：锚到**名称视图**的 centerX/centerY —— 点和文字在同一条直线上
-//   • Dock 图标：图标视图里全是图标本体，任何内缩位置都会压在图标上 → 放到图标正下方 2pt
-// 全部用 Auto Layout 约束，一次设定，layout 阶段零额外代码。
+// 把圆点装到图标视图上（位置交给 Auto Layout，一次设定）
 static UIView *SPRunDotInstall(SBIconView *iconView) {
     UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
     if (!dot) {
@@ -176,40 +132,68 @@ static UIView *SPRunDotInstall(SBIconView *iconView) {
     return dot;
 }
 
-static void SPRunIndicatorApply(SBIconView *iconView) {
-    BOOL active = SPRunIndicatorActiveForView(iconView);
-    UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
-    BOOL weHid = [objc_getAssociatedObject(iconView, kSPHidLabelKey) boolValue];
-    UIView *labelView = SPRunLabelView(iconView);
-
-    // 防重：清掉除当前 dot 外的遗留点
-    for (UIView *sv in [iconView.subviews copy]) {
-        if ([sv isKindOfClass:[SPRunDotView class]] && sv != dot) [sv removeFromSuperview];
+// 核心：按运行态决定「隐藏名称 + 画点」/「恢复名称 + 收点」；返回是否处于运行态
+// ⚠️ 只允许主线程调用（动 UI）；外部误用时自动切回主队列。
+static BOOL SPRunIndicatorApply(SBIconView *iconView) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ SPRunIndicatorApply(iconView); });
+        return NO;
     }
 
+    BOOL active = SPRunIndicatorActiveForView(iconView);   // 一次 apply 只查一次进程
+    UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
+
     if (active) {
+        // 防重：清掉除当前 dot 外的遗留点（只在需要画点时才做，避免无谓分配）
+        for (UIView *sv in [iconView.subviews copy]) {
+            if ([sv isKindOfClass:[SPRunDotView class]] && sv != dot) [sv removeFromSuperview];
+        }
         SPRunDotInstall(iconView);
+
+        UIView *labelView = SPRunLabelView(iconView);
         if (labelView) {
             labelView.hidden = YES;
             objc_setAssociatedObject(iconView, kSPHidLabelKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     } else {
         if (dot) [dot removeFromSuperview];
-        if (labelView && weHid) labelView.hidden = NO;
+        BOOL weHid = [objc_getAssociatedObject(iconView, kSPHidLabelKey) boolValue];
+        if (weHid) {
+            UIView *labelView = SPRunLabelView(iconView);
+            if (labelView) labelView.hidden = NO;
+        }
         objc_setAssociatedObject(iconView, kSPHidLabelKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
     if (!gSPIconViews) gSPIconViews = [NSHashTable weakObjectsHashTable];
     [gSPIconViews addObject:iconView];
 
-    SPRunDotDiagState(iconView, active ? @"apply-on" : @"apply-off");
+#if SP_ENABLE_DIAG
+    {
+        static NSMutableSet *seen = nil;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ seen = [NSMutableSet set]; });
+        NSString *key = [NSString stringWithFormat:@"%p-%d", iconView, active];
+        @synchronized (seen) {
+            if (![seen containsObject:key]) {
+                [seen addObject:key];
+                SPDiagLog([NSString stringWithFormat:@"dot %@ super=%@ bounds=%@",
+                           active ? @"on" : @"off",
+                           iconView.superview ? NSStringFromClass([iconView.superview class]) : @"(nil)",
+                           NSStringFromCGRect(iconView.bounds)]);
+            }
+        }
+    }
+#endif
+    return active;
 }
 
-// 进程事件才刷新（事件驱动，零轮询）
+// 进程启动/退出 → 刷新可见图标（事件驱动，零轮询）
 static void SPRunIndicatorRefreshVisible(void) {
     if (!SPBool(kRunIndicatorEnabled)) return;
     for (SBIconView *v in [gSPIconViews allObjects]) {
-        if (![v isKindOfClass:NSClassFromString(@"SBIconView")]) continue;
+        Class c = SPSBIconViewClass();
+        if (c && ![v isKindOfClass:c]) continue;
         if (!v.window) continue;
         SPRunIndicatorApply(v);
         if ([v respondsToSelector:@selector(_updateLabel)]) {
@@ -229,8 +213,7 @@ static void SPRunIndicatorScheduleRefresh(void) {
     });
 }
 
-// App 启动时进程注册有延迟：立即刷那一次常常还查不到进程 → 补一次 0.6s 后的一次性刷新。
-// 只是一次性 dispatch_after，不是轮询/定时器（老板要求：事件驱动、不常驻占 CPU）。
+// App 启动时进程注册有延迟：补一次 0.6s 后的一次性刷新（一次性 dispatch_after，非轮询）
 static void SPRunIndicatorScheduleRefreshDelayed(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -240,41 +223,21 @@ static void SPRunIndicatorScheduleRefreshDelayed(void) {
 
 #pragma mark - 钩子
 
-// 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带维护圆点。
-// 这是唯一的常规触发点（每次标签更新都会走），无 layoutSubviews / 无定时器。
+// 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带维护圆点
 %hook SBHIconManager
 - (BOOL)iconViewDisplaysLabel:(id)iconView {
-    if ([iconView isKindOfClass:NSClassFromString(@"SBIconView")]) {
+    Class c = SPSBIconViewClass();
+    if (c && [iconView isKindOfClass:c]) {
         SBIconView *v = (SBIconView *)iconView;
-        if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) SPRunIndicatorApply(v);
-        if (SPRunIndicatorActiveForView(v)) return NO;
+        if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) {
+            if (SPRunIndicatorApply(v)) return NO;   // 复用 apply 的判定结果，不重复查进程
+        }
     }
     return %orig;
 }
 %end
 
-// 系统自带的 label accessory 小圆点（约 4-5pt）：功能开启时一律隐藏，只留我们的 8pt 绿点
-%hook SBIconDotLabelAccessoryView
-- (void)didMoveToSuperview {
-    %orig;
-    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) {
-        self.hidden = YES;
-        static int logs = 0;
-        if (logs < 15) {
-            logs++;
-            SPDiagLog([NSString stringWithFormat:@"accessory hidden super=%@ frame=%@",
-                       NSStringFromClass([self.superview class]), NSStringFromCGRect(self.frame)]);
-        }
-    }
-}
-- (void)layoutSubviews {
-    %orig;
-    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
-}
-%end
-
-// 视图进入窗口 / 被移动到新的父视图时各补一次（Dock、新页面、拖动移动图标都走这两条路；
-// 代理视图被 SPRunIconViewInList 挡掉）。都是「事件」触发，不是每帧。
+// 视图进窗口 / 换父视图时补一次（Dock、新页面、移动图标都走这两条路；代理视图被列表归属判定挡掉）
 %hook SBIconView
 - (void)didMoveToWindow {
     %orig;
@@ -286,6 +249,19 @@ static void SPRunIndicatorScheduleRefreshDelayed(void) {
 }
 %end
 
+// 系统自带的 label accessory 小圆点：功能开启时一律隐藏，只保留我们的绿点
+%hook SBIconDotLabelAccessoryView
+- (void)didMoveToSuperview {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
+}
+- (void)layoutSubviews {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
+}
+%end
+
+// 进程事件 → 主队列延后刷新；刷新动作在 %orig 之前派发，x0 原返回值不被破坏
 %hook FBProcessManager
 - (void)noteProcessDidExit:(id)process {
     SPRunIndicatorScheduleRefresh();
@@ -293,7 +269,7 @@ static void SPRunIndicatorScheduleRefreshDelayed(void) {
 }
 - (void)launchProcessWithContext:(id)context {
     SPRunIndicatorScheduleRefresh();
-    SPRunIndicatorScheduleRefreshDelayed();   // 进程注册有延迟，补一次
+    SPRunIndicatorScheduleRefreshDelayed();
     %orig;
 }
 %end

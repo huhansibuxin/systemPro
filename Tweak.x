@@ -8,8 +8,7 @@
 #import "Common.h"
 #import "PrivateHeaders.h"
 #import "Prefs.h"
-#import <mach-o/dyld.h>
-#import <string.h>
+#import <string.h>    // Common.h 里 SPJailbreakRoot 用到 strlen
 
 BOOL SPIsSpringBoard = NO;
 BOOL SPGatePassed    = YES;
@@ -21,9 +20,10 @@ UIColor *SPTintColor(void) {
     return [UIColor colorWithRed:167.0/255.0 green:198.0/255.0 blue:255.0/255.0 alpha:1.0];
 }
 
-// ---------- 轻量诊断日志 ----------
-// SpringBoard 以 mobile 身份可写 /var/mobile/Library/Logs（1.0.0-5 实证已生成）。
+// ---------- 轻量诊断日志（默认关闭，SP_ENABLE_DIAG=1 才编入） ----------
+// SpringBoard 以 mobile 身份可写 /var/mobile/Library/Logs。
 // ⚠️ SSH 读取时要加真实根前缀：/rootfs/var/mobile/Library/Logs/systemPro.log
+#if SP_ENABLE_DIAG
 static NSString *SPDiagPath(void) {
     return @"/var/mobile/Library/Logs/systemPro.log";
 }
@@ -52,6 +52,10 @@ void SPDiagLog(NSString *line) {
         } @catch (NSException *e) {}
     }
 }
+#else
+void SPDiagReset(void) {}
+void SPDiagLog(NSString *line) { (void)line; }
+#endif
 
 // ---------- dpkg-status 自检（可选门禁） ----------
 #if SP_ENABLE_INTEGRITY_CHECK
@@ -109,34 +113,17 @@ static BOOL SPIntegrityCheckPasses(void) {
 #endif
         (void)[SPPrefs shared];        // 懒加载 + 挂 Darwin 通知
 
+#if SP_ENABLE_DIAG
         SPDiagReset();                 // 清空上一版日志，只保留本 BOOT 现场
         SPDiagLog([NSString stringWithFormat:@"ctor sb=%d tint=%@ jbroot=%@",
                    SPIsSpringBoard, SPTintColor(), SPJailbreakRoot() ?: @"(none)"]);
+#endif
 
-        // 记录真正加载进 SpringBoard 的可疑 tweak dylib —— 用于定位「谁在画那个 6pt 小点」
-        // （Choicy 在 ElleKit 下可能挡不住注入，所以直接看真实加载列表最可靠）
-        {
-            static const char *kSuspects[] = {
-                "SystemBox", "SOISM", "Squid", "Sneaky", "SnapVision", "Snapper",
-                "Unseen", "PerfectDynamic", "NotificationIsland", "TrollGesture", "CallAssist"
-            };
-            for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-                const char *n = _dyld_get_image_name(i);
-                if (!n) continue;
-                for (size_t k = 0; k < sizeof(kSuspects) / sizeof(kSuspects[0]); k++) {
-                    if (strstr(n, kSuspects[k])) {
-                        SPDiagLog([NSString stringWithFormat:@"dylib loaded: %s", n]);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 诊断：把解析结果和当前开关状态打到日志（syslog / Console 可查）
+        // 诊断：把解析结果和当前开关状态打到 NSLog（syslog / Console 可查，仅一次，零开销）
         SPLog(@"jbroot=%@ prefsPath=%@", SPJailbreakRoot() ?: @"(none)", SPPreferencesPath());
-        SPLog(@"keys: noLock=%d longPressOff=%d vpnTint=%d vpnNoFly=%d fakeBat=%ld runDot=%d",
+        SPLog(@"keys: noLock=%d longPressOff=%d vpnTint=%d vpnNoFly=%d fakeBat=%ld runDot=%d delMenu=%d",
               SPBool(kNoLockAfterRespring), SPBool(kDisableHomeScreenLongPress),
               SPBool(kColorizeVPNStatusBar), SPBool(kHideVPNFlyInAnimation),
-              SPInt(kFakeBatteryPercent), SPBool(kRunIndicatorEnabled));
+              SPInt(kFakeBatteryPercent), SPBool(kRunIndicatorEnabled), SPBool(kHideIconDeleteMenu));
     }
 }

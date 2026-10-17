@@ -42,23 +42,19 @@ static void SPPrefsChangedCallback(CFNotificationCenterRef center, void *observe
                                     CFNotificationSuspensionBehaviorDeliverImmediately);
 }
 
+// ⚠️ 性能：旧实现「键不存在时重读 plist + CFPreferences」——热路径（状态栏每次更新、
+// 每个图标标签更新）里所有未设置过的开关都会触发磁盘 IO + 跨进程调用，长期白烧 CPU。
+// 现在只查内存缓存：未命中即视为「关闭」；面板写入后由 Darwin 通知触发 load 刷新缓存。
 - (id)valueFor:(NSString *)key {
     if (!SPGatePassed) return nil; // 门禁未过：一切开关视为关闭
-    @synchronized (self) {
-        id v = _cache[key];
-        if (v) return v;
+
+    NSDictionary *cache = nil;
+    @synchronized (self) { cache = _cache; }
+    if (!cache) {                  // 仅首次（尚未加载）才读盘
+        [self load];
+        @synchronized (self) { cache = _cache; }
     }
-    // 回退 1：重读一次盘（面板刚写完、缓存未更新时）
-    NSDictionary *fresh = [NSDictionary dictionaryWithContentsOfFile:SPPreferencesPath()];
-    if ([fresh isKindOfClass:[NSDictionary class]]) {
-        @synchronized (self) { _cache = fresh; }
-        id v2 = fresh[key];
-        if (v2) return v2;
-    }
-    // 回退 2：CFPreferences（部分环境有效；roothide 下可能为空，故放在最后）
-    CFPropertyListRef p = CFPreferencesCopyAppValue((__bridge CFStringRef)key,
-                                                    CFSTR("com.sytem.pro"));
-    return (__bridge_transfer id)p;
+    return cache[key];
 }
 
 - (BOOL)boolFor:(NSString *)key {

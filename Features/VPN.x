@@ -1,22 +1,36 @@
 // Features_VPN.x — VPN 上色 + 隐藏原版 VPN 图标 + VPN 图标不飞入
 //
-// ⭐ 染色方案完全对齐 OwnGoalStudio/SingleVPN（MIT 开源，iOS16 实测可用）——
-//    之前一直失败的原因：主屏状态栏的 WiFi 图标不是走「信号视图颜色」通道，
-//    而是在 _UIStatusBarWifiItem -applyUpdate:toDisplayItem: 里对
-//    networkIconView（_UIStatusBarImageView）直接 setTintColor:（SingleVPN 的核心做法）。
-//
-// 三个染色点（与 SingleVPN 一致）：
-//   ① _UIStatusBarWifiItem -applyUpdate:toDisplayItem: → networkIconView.tintColor
-//   ② _UIStatusBarWifiItem -_fillColorForUpdate:entry: → 直接返回我们的色
+// 染色方案对齐 OwnGoalStudio/SingleVPN（MIT，iOS16 实测可用）。三个染色点：
+//   ① _UIStatusBarWifiItem -applyUpdate:toDisplayItem: → networkIconView(_UIStatusBarImageView) setTintColor:
+//   ② _UIStatusBarWifiItem -_fillColorForUpdate:entry: → 返回我们的色
 //   ③ _UIStatusBarCellularItem -applyUpdate:toDisplayItem: → 网络类型文字（4G/5G）setTextColor:
 //      （蜂窝信号塔保持原色，对齐 SystemX 语义）
 //
-// VPN 活跃判定：数据层 vpnEntry.isEnabled；控制中心下拉会送来不含 vpnEntry 的 overlay 数据，
-// 用「连续 3 次缺失才判定断开」防抖，避免染色忽有忽无。
-// 隐藏原版 VPN 图标：在 _UIStatusBar -_updateDisplayedItemsWithData: 里剥 vpnEntry 的副本。
+// 隐藏原版 VPN 图标：_UIStatusBar -_updateDisplayedItemsWithData: 里剥 vpnEntry 的副本
+// （原对象保持完整，否则下一轮读到被剥数据会闪色）。
+//
+// 性能：所有私有类查找结果缓存；诊断日志由 SP_ENABLE_DIAG 编译期开关控制（默认关，零开销）。
 #import "../Common.h"
 #import "../PrivateHeaders.h"
 #import "../Prefs.h"
+
+#pragma mark - 私有类缓存（热路径：每次状态栏更新都会用到）
+
+static Class SPImageViewClass(void) {
+    static Class c = Nil; static dispatch_once_t o;
+    dispatch_once(&o, ^{ c = NSClassFromString(@"_UIStatusBarImageView"); });
+    return c;
+}
+static Class SPNetTypeViewClass(void) {
+    static Class c = Nil; static dispatch_once_t o;
+    dispatch_once(&o, ^{ c = NSClassFromString(@"_UIStatusBarCellularNetworkTypeView"); });
+    return c;
+}
+static Class SPStringViewClass(void) {
+    static Class c = Nil; static dispatch_once_t o;
+    dispatch_once(&o, ^{ c = NSClassFromString(@"_UIStatusBarStringView"); });
+    return c;
+}
 
 #pragma mark - VPN 活跃检测（数据层权威判据 + 防抖）
 
@@ -54,6 +68,7 @@ static void SPVPNRefreshFromData(id data) {
     }
 }
 
+// 首帧数据到达前的兜底（之后完全以数据层为准，不再做任何 IPC）
 static BOOL SPVPNNEVConnected(void) {
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     if (gSPVPNNEVCacheAt > 0 && now - gSPVPNNEVCacheAt < 5.0) return gSPVPNNEVCache;
@@ -80,13 +95,22 @@ static BOOL SPVPNActive(void) {
     return SPVPNNEVConnected();
 }
 
+// 上色/隐藏总门控（每帧仅几个布尔判断 + 一次字典读，无 IPC）
 static BOOL SPVPNColorGate(void) {
     return SPIsSpringBoard && SPBool(kColorizeVPNStatusBar) && SPVPNActive();
 }
 
-#pragma mark - 诊断（定义必须在使用之前）
+// 网络类型文字判定（对齐 SingleVPN 的 IsNetworkTypeText）
+static BOOL SPIsNetworkTypeText(NSString *text) {
+    if (![text isKindOfClass:[NSString class]]) return NO;
+    return [text isEqualToString:@"G"] || [text isEqualToString:@"3G"] ||
+           [text isEqualToString:@"4G"] || [text containsString:@"5G"] ||
+           [text isEqualToString:@"LTE"];
+}
 
-// 一次性记录「实际被染色」的视图类名 —— 定位主屏/控制中心到底走的哪条通道
+#pragma mark - 诊断（仅 SP_ENABLE_DIAG=1 时编入，关闭时为空实现、不做字符串拼接）
+
+#if SP_ENABLE_DIAG
 static void SPVPNTintDiag(id view, const char *via) {
     static NSMutableSet *seen = nil;
     static dispatch_once_t once;
@@ -98,8 +122,6 @@ static void SPVPNTintDiag(id view, const char *via) {
     }
     SPDiagLog([NSString stringWithFormat:@"tint %s view=%@", via, NSStringFromClass([view class])]);
 }
-
-// 状态栏视图树诊断：每个 _UIStatusBar 实例记一次完整类树（App 内 / 主屏实例对比）
 static void SPStatusBarTreeDiag(UIView *root) {
     static NSMutableSet *logged = nil;
     static dispatch_once_t once;
@@ -122,14 +144,10 @@ static void SPStatusBarTreeDiag(UIView *root) {
     }
     SPDiagLog(line);
 }
-
-// 网络类型文字判定（对齐 SingleVPN 的 IsNetworkTypeText）
-static BOOL SPIsNetworkTypeText(NSString *text) {
-    if (![text isKindOfClass:[NSString class]]) return NO;
-    return [text isEqualToString:@"G"] || [text isEqualToString:@"3G"] ||
-           [text isEqualToString:@"4G"] || [text containsString:@"5G"] ||
-           [text isEqualToString:@"LTE"];
-}
+#else
+#define SPVPNTintDiag(view, via)      do { (void)(view); } while (0)
+#define SPStatusBarTreeDiag(root)     do { (void)(root); } while (0)
+#endif
 
 #pragma mark - 钩子：状态栏容器（数据层刷新 + 动画开关）
 
@@ -138,7 +156,8 @@ static BOOL SPIsNetworkTypeText(NSString *text) {
 - (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations {
     SPVPNRefreshFromData(data);   // 先用「原始数据」判定 VPN 活跃
 
-    // 每个状态栏实例做一次视图树诊断（App 内染色、主屏不染 → 需要对比两个实例的类树）
+#if SP_ENABLE_DIAG
+    // 每个状态栏实例做一次视图树诊断（App 内染色、主屏不染时用来对比类树）
     {
         static NSMutableSet *scheduled = nil;
         static dispatch_once_t once;
@@ -156,11 +175,11 @@ static BOOL SPIsNetworkTypeText(NSString *text) {
             });
         }
     }
+#endif
 
-    // 上色生效 → 剥掉 vpnEntry 的**副本**交给系统（原对象保持完整，否则下一轮读到被剥数据会闪色）；
-    // 条目不存在 → 原版 VPN 图标不创建、不占位、没有入场动画。
+    // 上色生效 → 剥掉 vpnEntry 的「副本」交给系统（原对象保持完整，避免下一轮判定退化导致闪色）
     id workData = data;
-    if (SPVPNColorGate() && data) {
+    if (data && SPVPNColorGate()) {
         @try {
             id copy = [data copy];
             SEL setSel = NSSelectorFromString(@"setVpnEntry:");
@@ -171,11 +190,11 @@ static BOOL SPIsNetworkTypeText(NSString *text) {
         } @catch (NSException *e) {}
     }
 
-    // ⚠️ %orig 显式传参必须给全部实参（data / styleAttributes / extraAnimations）
+    // ⚠️ %orig 显式传参必须给全部实参
     %orig(workData, attributes, animations);
 }
 
-// VPN 图标不飞入：VPN 活跃 + 开关开启 → 本次状态栏更新不做动画（最有效的一层）
+// VPN 图标不飞入：VPN 活跃 + 开关开启 → 本次状态栏更新不做动画
 - (BOOL)areAnimationsEnabled {
     if (SPIsSpringBoard && SPBool(kHideVPNFlyInAnimation) && SPVPNActive()) return NO;
     return %orig;
@@ -188,27 +207,25 @@ static BOOL SPIsNetworkTypeText(NSString *text) {
 - (id)applyUpdate:(id)update toDisplayItem:(id)displayItem {
     BOOL vpnOn = SPVPNColorGate();
     id ret = %orig;
-    if (vpnOn) {
-        @try {
-            // 与 SingleVPN 一致：遍历本条目的 displayItems，逐个补一次原始更新，
-            // 再对 networkIconView（_UIStatusBarImageView）设 tintColor
-            for (id item in [[self displayItems] allValues]) {
-                %orig(update, item);
-                if (item == ((id (*)(id, SEL))objc_msgSend)(self, @selector(networkIconView)) &&
-                    [item isKindOfClass:NSClassFromString(@"_UIStatusBarImageView")]) {
-                    [(UIImageView *)item setTintColor:SPTintColor()];
-                    SPVPNTintDiag(item, "wifi-icon");
-                }
+    if (!vpnOn) return ret;
+
+    @try {
+        NSDictionary *items = [self displayItems];
+        UIView *iconView = ((id (*)(id, SEL))objc_msgSend)(self, @selector(networkIconView));
+        Class ivClass = SPImageViewClass();
+        for (id item in [items allValues]) {
+            // 与 SingleVPN 一致：逐个 displayItem 补一次原始更新，再设 tintColor
+            %orig(update, item);
+            if (item == iconView && ivClass && [item isKindOfClass:ivClass]) {
+                [(UIImageView *)item setTintColor:SPTintColor()];
+                SPVPNTintDiag(item, "wifi-icon");
             }
-        } @catch (NSException *e) {}
-    }
+        }
+    } @catch (NSException *e) {}
     return ret;
 }
 - (UIColor *)_fillColorForUpdate:(id)update entry:(id)entry {
-    if (SPVPNColorGate()) {
-        SPVPNTintDiag(self, "fill");
-        return SPTintColor();
-    }
+    if (SPVPNColorGate()) return SPTintColor();
     return %orig;
 }
 %end
@@ -220,30 +237,31 @@ static BOOL SPIsNetworkTypeText(NSString *text) {
     BOOL vpnOn = SPVPNColorGate();
     id ret = %orig;
 
+    // 未开启时完全不做后续遍历
+    if (!vpnOn) return ret;
+
     UIColor *originalColor = nil;
     @try { originalColor = [[update styleAttributes] textColor]; } @catch (NSException *e) {}
 
     @try {
+        Class ntClass = SPNetTypeViewClass();
+        Class svClass = SPStringViewClass();
         for (id item in [[self displayItems] allValues]) {
             UIView *v = [item view];
             if (!v) continue;
             UIView *sv = nil;
-            if ([v isKindOfClass:NSClassFromString(@"_UIStatusBarCellularNetworkTypeView")]) {
+            if (ntClass && [v isKindOfClass:ntClass]) {
                 sv = ((id (*)(id, SEL))objc_msgSend)(v, @selector(stringView));
-            } else if ([v isKindOfClass:NSClassFromString(@"_UIStatusBarStringView")]) {
+            } else if (svClass && [v isKindOfClass:svClass]) {
                 sv = v;
             }
-            if (![sv isKindOfClass:NSClassFromString(@"_UIStatusBarStringView")]) continue;
+            if (!sv || (svClass && ![sv isKindOfClass:svClass])) continue;
 
             NSString *text = ((id (*)(id, SEL))objc_msgSend)(sv, @selector(text));
             if (!SPIsNetworkTypeText(text)) continue;
 
-            if (vpnOn) {
-                ((void (*)(id, SEL, UIColor *))objc_msgSend)(sv, @selector(setTextColor:), SPTintColor());
-                SPVPNTintDiag(sv, "cell-text");
-            } else if (originalColor) {
-                ((void (*)(id, SEL, UIColor *))objc_msgSend)(sv, @selector(setTextColor:), originalColor);
-            }
+            ((void (*)(id, SEL, UIColor *))objc_msgSend)(sv, @selector(setTextColor:), SPTintColor());
+            SPVPNTintDiag(sv, "cell-text");
         }
     } @catch (NSException *e) {}
     return ret;

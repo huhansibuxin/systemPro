@@ -1,6 +1,6 @@
 # systemPro
 
-标识符 `com.sytem.pro` · 作者 **D** · 当前版本 **1.0.0-14**
+标识符 `com.sytem.pro` · 作者 **D** · 当前版本 **1.0.0-15**
 
 systemPro 精简版：从 duck1001/systemPro（38 项功能）裁到 **6 项刚需**，全部只注入 **SpringBoard**。
 功能面移植自 SystemX（com.wkk.systembox）逆向成果（机制均有 iOS16 运行时 dump 实证），
@@ -16,8 +16,9 @@ systemPro 精简版：从 duck1001/systemPro（38 项功能）裁到 **6 项刚�
 | 长按桌面禁用 | `disableHomeScreenLongPress` | 长按桌面/图标不再进入编辑模式：不抖动、无任何动作；3D Touch 长按菜单保留（废掉 `SBIconController` 的 `_longPressToEditGestureRecognizer`，delegate 层双保险） |
 | VPN 上色 | `colorizeVPNStatusBar` | VPN 连接时 VPN/WiFi/蜂窝一起变为 **#A7C6FF**，并**隐藏原版带方框的 VPN 图标**（`canEnableDisplayItem:fromData:` 返回 NO + view 隐藏双保险） |
 | VPN 图标不飞入 | `hideVPNFlyInAnimation` | VPN 图标瞬间出现，不播滑入动画（`additionAnimationForDisplayItemWithIdentifier:` 返回 nil） |
-| 伪装电量 | `fakeBatteryPercent` | 输入 1-100 立即伪装，0 恢复；四个覆盖面：`UIDevice/BCBatteryDevice/SBUIController/UIStatusBarBatteryPercentItemView` |
-| APP 运行指示点 | `runIndicatorEnabled` | 运行中的 App（含后台挂起，`FBProcessManager` 实证）图标名称替换为 **#A7C6FF** 圆点；进程启动/退出事件驱动刷新，零轮询 |
+| 伪装电量 | `fakeBatteryPercent` | 输入 1-100 立即伪装，0 恢复；只改内置电池（`BCBatteryDevice isInternal` 判定），手表/耳机不受影响 |
+| APP 运行指示点 | `runIndicatorEnabled` | 运行中的 App（含后台挂起，`FBProcessManager` 实证）图标名称替换为 8pt 绿点（电池充电绿）；事件驱动刷新，零轮询 |
+| 长按菜单隐藏删除 | `hideIconDeleteMenu` | 长按 App 的菜单去掉「删除 App」，其余项保留（`SBHIconManager -iconView:applicationShortcutItemsWithProposedItems:` 过滤） |
 
 > 强调色 #A7C6FF = RGB(167,198,255)，取自老板设备 SystemX 配置文件实读
 > （`vpnStatusBarColor{R,G,B,A}` = 0.6549 / 0.7765 / 1.0 / 1.0）。VPN 上色与运行指示点共用，
@@ -25,8 +26,7 @@ systemPro 精简版：从 duck1001/systemPro（38 项功能）裁到 **6 项刚�
 
 ## 设置界面
 
-进入 设置 → systemPro：单页 6 行（5 开关 + 1 数值项），右上角红色「注销」按钮只在首页显示，
-改动即时生效（长按禁用 / 运行指示点建议注销一次做全量刷新）。
+进入 设置 → systemPro：单页 7 行（6 开关 + 1 数值项），改动即时生效（本插件不提供注销按钮）。
 
 ## 仓库结构
 
@@ -41,7 +41,7 @@ systemPro/
 ├── PrivateHeaders.h         # 需要 hook 的私有类声明（iOS16 dump 实证签名）
 ├── Features/                # 功能源码
 │   ├── StatusBar.x          #   伪装电量
-│   ├── Disable.x            #   注销不锁屏 + 长按桌面禁用
+│   ├── Disable.x            #   注销不锁屏 + 长按桌面禁用 + 长按菜单隐藏删除
 │   ├── VPN.x                #   VPN 上色 + 隐藏原图标 + 不飞入
 │   └── RunIndicator.x       #   APP 运行指示点
 ├── prefs/                   # 设置面板（自绘 UI，PSListController 系）

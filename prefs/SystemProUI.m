@@ -1,6 +1,6 @@
 // SystemProUI.m — systemPro 设置面板（自绘高级 UI，不用 PSListController 模板）
 // 设计语言：insetGrouped 卡片 + 彩色图标块 + 自定义开关行 + 编辑值子页
-// + 注销二次确认 + 顶部渐变 Hero 卡 + 轻点震动反馈 + 悬浮 toast 提示
+// + 轻点震动反馈 + 原生弹窗提示（无注销按钮：改动即时生效）
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Foundation/Foundation.h>
@@ -36,13 +36,10 @@ typedef NS_ENUM(NSInteger, SPRowKind) {
 @property (nonatomic, strong) UIColor *tint;
 @property (nonatomic, copy) NSString *defValue;
 @property (nonatomic) BOOL numeric;
-@property (nonatomic) BOOL needsRespring;
 @property (nonatomic) BOOL destructive;
 @property (nonatomic, copy) NSString *actionName;
-@property (nonatomic) NSInteger pageIndex;   // SPRowKindLink: 目标子页编号
 @property (nonatomic) double minValue;       // SPRowKindSlider
 @property (nonatomic) double maxValue;
-@property (nonatomic, strong) NSArray<NSString *> *countKeys;   // SPRowKindLink: 入口计数键集
 @end
 
 @implementation SPRow
@@ -81,119 +78,6 @@ static void SPPrefsWrite(NSString *key, id value) {
     if (!ok) SPLog(@"prefs write FAILED: %@", path);
     notify_post(SP_NOTIFY_RELOAD);
 }
-
-#pragma mark - 首页 Hero 卡
-@interface SPHeroView : UIView
-@property (nonatomic, strong) CAGradientLayer *gradient;
-@property (nonatomic, strong) UILabel *countLabel;
-@end
-
-@implementation SPHeroView
-- (instancetype)initWithFrame:(CGRect)frame {
-    if ((self = [super initWithFrame:frame])) {
-        self.backgroundColor = [UIColor clearColor];
-        UIView *card = [UIView new];
-        card.translatesAutoresizingMaskIntoConstraints = NO;
-        card.layer.cornerRadius = 22;
-        card.layer.cornerCurve = kCACornerCurveContinuous;
-        card.layer.masksToBounds = YES;
-        [self addSubview:card];
-        self.gradient = [CAGradientLayer layer];
-        self.gradient.colors = @[(__bridge id)[UIColor colorWithRed:0.36 green:0.34 blue:0.92 alpha:1].CGColor,
-                                 (__bridge id)[UIColor colorWithRed:0.61 green:0.28 blue:0.88 alpha:1].CGColor];
-        self.gradient.startPoint = CGPointMake(0, 0);
-        self.gradient.endPoint = CGPointMake(1, 1.1);
-        [card.layer addSublayer:self.gradient];
-
-        // 图标块
-        UIView *iconWrap = [UIView new];
-        iconWrap.translatesAutoresizingMaskIntoConstraints = NO;
-        iconWrap.backgroundColor = [UIColor colorWithWhite:1 alpha:0.18];
-        iconWrap.layer.cornerRadius = 14;
-        iconWrap.layer.cornerCurve = kCACornerCurveContinuous;
-        [card addSubview:iconWrap];
-        UIImageView *icon = [[UIImageView alloc] initWithImage:
-            [UIImage systemImageNamed:@"wand.and.stars" withConfiguration:
-                [UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightSemibold]]];
-        icon.tintColor = [UIColor whiteColor];
-        icon.translatesAutoresizingMaskIntoConstraints = NO;
-        [iconWrap addSubview:icon];
-
-        UILabel *title = [UILabel new];
-        title.text = @"systemPro";
-        title.font = [UIFont systemFontOfSize:26 weight:UIFontWeightBold];
-        title.textColor = [UIColor whiteColor];
-        title.translatesAutoresizingMaskIntoConstraints = NO;
-        [card addSubview:title];
-
-        UILabel *sub = [UILabel new];
-        sub.text = @"Jailbreak Toolkit";
-        sub.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-        sub.textColor = [UIColor colorWithWhite:1 alpha:0.75];
-        sub.translatesAutoresizingMaskIntoConstraints = NO;
-        [card addSubview:sub];
-
-        self.countLabel = [UILabel new];
-        self.countLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
-        self.countLabel.textColor = [UIColor colorWithWhite:1 alpha:0.9];
-        self.countLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        [card addSubview:self.countLabel];
-
-        UILabel *ver = [UILabel new];
-        ver.text = [NSString stringWithFormat:@"v%@", SP_VERSION];
-        ver.font = [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
-        ver.textColor = [UIColor colorWithWhite:1 alpha:0.9];
-        ver.backgroundColor = [UIColor colorWithWhite:1 alpha:0.16];
-        ver.layer.cornerRadius = 8;
-        ver.layer.masksToBounds = YES;
-        ver.textAlignment = NSTextAlignmentCenter;
-        ver.translatesAutoresizingMaskIntoConstraints = NO;
-        [card addSubview:ver];
-
-        UILabel *author = [UILabel new];
-        author.text = @"by D";
-        author.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
-        author.textColor = [UIColor colorWithWhite:1 alpha:0.65];
-        author.translatesAutoresizingMaskIntoConstraints = NO;
-        [card addSubview:author];
-
-        [NSLayoutConstraint activateConstraints:@[
-            [card.topAnchor constraintEqualToAnchor:self.topAnchor constant:8],
-            [card.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:20],
-            [card.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-20],
-            [card.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-6],
-            [card.heightAnchor constraintEqualToConstant:142],
-
-            [iconWrap.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:20],
-            [iconWrap.topAnchor constraintEqualToAnchor:card.topAnchor constant:22],
-            [iconWrap.widthAnchor constraintEqualToConstant:52],
-            [iconWrap.heightAnchor constraintEqualToConstant:52],
-            [icon.centerXAnchor constraintEqualToAnchor:iconWrap.centerXAnchor],
-            [icon.centerYAnchor constraintEqualToAnchor:iconWrap.centerYAnchor],
-
-            [title.leadingAnchor constraintEqualToAnchor:iconWrap.trailingAnchor constant:14],
-            [title.topAnchor constraintEqualToAnchor:card.topAnchor constant:24],
-            [sub.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-            [sub.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:2],
-            [self.countLabel.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-            [self.countLabel.topAnchor constraintEqualToAnchor:sub.bottomAnchor constant:8],
-
-            [author.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-20],
-            [author.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-16],
-            [ver.trailingAnchor constraintEqualToAnchor:author.leadingAnchor constant:-8],
-            [ver.centerYAnchor constraintEqualToAnchor:author.centerYAnchor],
-            [ver.widthAnchor constraintEqualToConstant:74],
-            [ver.heightAnchor constraintEqualToConstant:22],
-        ]];
-    }
-    return self;
-}
-- (void)layoutSubviews {
-    [super layoutSubviews];
-    UIView *card = self.subviews.firstObject;
-    self.gradient.frame = card.bounds;
-}
-@end
 
 #pragma mark - 通用单元格
 @interface SPCell : UITableViewCell
@@ -486,11 +370,9 @@ static void SPPrefsWrite(NSString *key, id value) {
 // 只重写 cellForRow 自定义样式 —— 这是社区验证过的标准姿势；
 // 切记不要自己接管 numberOfSections/numberOfRows（会撞 PSListController 内部缓存，iOS 16 直接抛 NSRangeException）。
 @interface SystemProRootController : PSListController
-@property (nonatomic) NSInteger pageIndex;   // -1 = 首页；>=0 = 子页
 @property (nonatomic, strong) UITableView *contentTable;
 @property (nonatomic, strong) NSMutableArray<SPSection *> *model;
 @property (nonatomic, strong) NSMutableDictionary *prefs;
-@property (nonatomic, strong) SPHeroView *hero;
 @end
 
 @implementation SystemProRootController
@@ -499,13 +381,11 @@ static void SPPrefsWrite(NSString *key, id value) {
 // 导致首页分页入口永远不可见（"其他功能看不见"的根因）。
 - (instancetype)init {
     self = [super init];
-    if (self) _pageIndex = -1;
     return self;
 }
 
 - (instancetype)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
     self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil];
-    if (self) _pageIndex = -1;
     return self;
 }
 
@@ -580,17 +460,9 @@ static void SPPrefsWrite(NSString *key, id value) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     [self spEnsureModel];
-    self.title = (self.pageIndex < 0) ? @"systemPro" : [self spPageName:self.pageIndex];
+    self.title = @"systemPro";
     self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
     self.prefs = SPPrefsLoad();
-
-    // 注销按钮：右上角、红色；只在首页（主设置页）显示
-    UIBarButtonItem *rb = [[UIBarButtonItem alloc] initWithTitle:@"注销"
-                                                          style:UIBarButtonItemStylePlain
-                                                         target:self
-                                                         action:@selector(confirmRespring)];
-    rb.tintColor = [UIColor systemRedColor];
-    if (self.pageIndex < 0) self.navigationItem.rightBarButtonItem = rb;
 
     // 只使用 iOS 16 上确有实现的选择器：PSListController 的 -table（SystemX 同款、实证可用）。
     // 绝不要再碰 -tableView（iOS 16 未实现 → unrecognized selector 闪退）。
@@ -598,7 +470,7 @@ static void SPPrefsWrite(NSString *key, id value) {
     if (!tv && [self.view isKindOfClass:[UITableView class]]) tv = (UITableView *)self.view;
     self.contentTable = tv;
     if (tv) tv.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    if (tv && self.pageIndex < 0) {
+    if (tv) {
         // 极简头部：只留插件标题 + 版本号（砍掉大卡片）
         UIView *hdr = [[UIView alloc] initWithFrame:CGRectMake(0, 0, tv.bounds.size.width, 78)];
         UILabel *t = [UILabel new];
@@ -654,7 +526,6 @@ static void SPPrefsWrite(NSString *key, id value) {
     [super viewWillAppear:animated];
     self.prefs = SPPrefsLoad();
     [self.contentTable reloadData];
-    [self updateHeroCount];
 }
 
 #pragma mark 模型
@@ -663,9 +534,8 @@ static void SPPrefsWrite(NSString *key, id value) {
     s.title = title; s.footer = footer; s.rows = rows;
     return s;
 }
-- (SPRow *)sw:(NSString *)key title:(NSString *)t sub:(NSString *)sub icon:(NSString *)icon tint:(UIColor *)tint respring:(BOOL)rp {
+- (SPRow *)sw:(NSString *)key title:(NSString *)t sub:(NSString *)sub icon:(NSString *)icon tint:(UIColor *)tint {
     SPRow *r = [SPRow kind:SPRowKindSwitch key:key title:t subtitle:sub icon:icon tint:tint];
-    r.needsRespring = rp;
     return r;
 }
 - (SPRow *)tx:(NSString *)key title:(NSString *)t icon:(NSString *)icon def:(NSString *)def numeric:(BOOL)num {
@@ -673,24 +543,6 @@ static void SPPrefsWrite(NSString *key, id value) {
     r.defValue = def; r.numeric = num;
     return r;
 }
-- (SPRow *)lk:(NSString *)t sub:(NSString *)sub icon:(NSString *)icon idx:(NSInteger)idx {
-    SPRow *r = [SPRow kind:SPRowKindLink key:nil title:t subtitle:sub icon:icon
-                      tint:[UIColor colorWithRed:0.36 green:0.34 blue:0.92 alpha:1]];
-    r.pageIndex = idx;
-    return r;
-}
-- (SPRow *)sl:(NSString *)key title:(NSString *)t icon:(NSString *)icon {
-    SPRow *r = [SPRow kind:SPRowKindSlider key:key title:t subtitle:nil icon:icon tint:[UIColor systemGrayColor]];
-    r.minValue = -20;
-    r.maxValue = 20;
-    r.defValue = @"0";
-    return r;
-}
-- (NSString *)spPageName:(NSInteger)idx {
-    NSArray *names = @[@"状态栏", @"桌面与 Dock", @"文件夹", @"禁用与隐藏", @"相册", @"系统"];
-    return (idx >= 0 && idx < (NSInteger)names.count) ? names[idx] : @"systemPro";
-}
-
 - (void)buildModel {
     UIColor *indigo = [UIColor colorWithRed:0.36 green:0.34 blue:0.92 alpha:1];
     UIColor *blue   = [UIColor systemBlueColor];
@@ -700,15 +552,15 @@ static void SPPrefsWrite(NSString *key, id value) {
     UIColor *red    = [UIColor systemRedColor];
 
     SPSection *main = [self section:@""
-        footer:@"全部功能只注入 SpringBoard，改动即时生效；长按禁用 / 运行指示点建议注销一次做全量刷新。"
+        footer:@"全部功能只注入 SpringBoard，改动即时生效。"
         rows:@[
-            [self sw:kNoLockAfterRespring title:@"注销不锁屏" sub:@"注销/重启后直接进入桌面，不回锁屏" icon:@"lock.open.fill" tint:green respring:NO],
-            [self sw:kDisableHomeScreenLongPress title:@"长按桌面禁用" sub:@"长按不进编辑模式：不抖动、无动作（3D Touch 保留）" icon:@"hand.point.up.left.fill" tint:indigo respring:NO],
-            [self sw:kColorizeVPNStatusBar title:@"VPN 上色" sub:@"VPN 连接时 VPN/WiFi/蜂窝变为 #A7C6FF，并隐藏原版 VPN 图标" icon:@"shield.lefthalf.filled" tint:blue respring:NO],
-            [self sw:kHideVPNFlyInAnimation title:@"VPN 图标不飞入" sub:@"VPN 图标瞬间出现，不播滑入动画" icon:@"bolt.slash.fill" tint:teal respring:NO],
+            [self sw:kNoLockAfterRespring title:@"注销不锁屏" sub:@"注销/重启后直接进入桌面，不回锁屏" icon:@"lock.open.fill" tint:green],
+            [self sw:kDisableHomeScreenLongPress title:@"长按桌面禁用" sub:@"长按不进编辑模式：不抖动、无动作（3D Touch 保留）" icon:@"hand.point.up.left.fill" tint:indigo],
+            [self sw:kColorizeVPNStatusBar title:@"VPN 上色" sub:@"VPN 连接时 VPN/WiFi/蜂窝变为 #A7C6FF，并隐藏原版 VPN 图标" icon:@"shield.lefthalf.filled" tint:blue],
+            [self sw:kHideVPNFlyInAnimation title:@"VPN 图标不飞入" sub:@"VPN 图标瞬间出现，不播滑入动画" icon:@"bolt.slash.fill" tint:teal],
             [self tx:kFakeBatteryPercent title:@"伪装电量（1-100，0=关）" icon:@"battery.75" def:@"0" numeric:YES],
-            [self sw:kRunIndicatorEnabled title:@"APP 运行指示点" sub:@"运行中的 App，图标名称替换为 #A7C6FF 圆点" icon:@"circlebadge.fill" tint:purple respring:NO],
-            [self sw:kHideIconDeleteMenu title:@"长按菜单隐藏删除" sub:@"长按 App 的菜单里去掉「删除 App」，其它项保留" icon:@"trash.slash.fill" tint:red respring:NO],
+            [self sw:kRunIndicatorEnabled title:@"APP 运行指示点" sub:@"运行中的 App，图标名称替换为 #A7C6FF 圆点" icon:@"circlebadge.fill" tint:purple],
+            [self sw:kHideIconDeleteMenu title:@"长按菜单隐藏删除" sub:@"长按 App 的菜单里去掉「删除 App」，其它项保留" icon:@"trash.slash.fill" tint:red],
         ]];
 
     SPRow *au = [SPRow kind:SPRowKindInfo key:nil title:@"作者" subtitle:nil icon:@"person" tint:[UIColor systemGrayColor]];
@@ -765,13 +617,6 @@ static void SPPrefsWrite(NSString *key, id value) {
             [weakSelf setPref:row.key value:v row:row];
         };
         [self.navigationController pushViewController:e animated:YES];
-    } else if (row.kind == SPRowKindButton) {
-        if ([row.actionName isEqualToString:@"respring"]) [self confirmRespring];
-        else if ([row.actionName isEqualToString:@"reset"]) [self confirmReset];
-    } else if (row.kind == SPRowKindLink) {
-        SystemProRootController *page = [[SystemProRootController alloc] init];
-        page.pageIndex = row.pageIndex;
-        [self.navigationController pushViewController:page animated:YES];
     }
 }
 
@@ -784,29 +629,7 @@ static void SPPrefsWrite(NSString *key, id value) {
     UIImpactFeedbackGenerator *h = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [h impactOccurred];
 
-    if (row.needsRespring) {
-        // 需要注销生效的功能：保存后直接问「是否注销？」（确定红 / 取消蓝），不再只弹提示
-        if (row.kind != SPRowKindSlider) [self.contentTable reloadData];
-        [self confirmRespring];
-        [self updateHeroCount];
-        return;
-    }
     if (row.kind != SPRowKindSlider) [self.contentTable reloadData]; // 拖动滑块时不整表刷新
-    [self updateHeroCount];
-}
-
-- (void)updateHeroCount {
-    if (!self.hero) return; // 只在首页有 Hero 卡
-    NSArray *keys = @[
-        kNoLockAfterRespring, kDisableHomeScreenLongPress,
-        kColorizeVPNStatusBar, kHideVPNFlyInAnimation,
-        kRunIndicatorEnabled,
-    ];
-    NSInteger on = 0;
-    for (NSString *k in keys) {
-        if ([self.prefs[k] boolValue]) on++;
-    }
-    self.hero.countLabel.text = [NSString stringWithFormat:@"已启用 %ld / %ld 项功能", (long)on, (long)keys.count];
 }
 
 // 原生弹窗提示（替代自绘 toast）
@@ -820,80 +643,6 @@ static void SPPrefsWrite(NSString *key, id value) {
 }
 
 #pragma mark - 注销（二次确认 + 多路降级 + 失败提示）
-- (void)confirmRespring {
-    if (self.presentedViewController) return; // 已有弹窗时不叠加
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"是否注销？"
-        message:nil
-        preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"注销" style:UIAlertActionStyleDestructive
-                                        handler:^(UIAlertAction *x) { [self spawnRespring]; }]];
-    [self presentViewController:a animated:YES completion:nil];
-}
-
 // 收集所有可能藏工具的 bin 目录：rootless /var/jb、老式 /usr、roothide jbroot(.jbroot-*)
-- (NSMutableArray<NSString *> *)spToolDirs {
-    NSMutableArray *dirs = [NSMutableArray array];
-    [dirs addObject:@"/var/jb/usr/bin"];
-    [dirs addObject:@"/usr/bin"];
-    [dirs addObject:@"/usr/local/bin"];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *base = @"/var/containers/Bundle/Application";
-    NSArray *subs = [fm contentsOfDirectoryAtPath:base error:nil];
-    for (NSString *s in subs) {
-        if (![s hasPrefix:@".jbroot-"]) continue;
-        [dirs addObject:[base stringByAppendingPathComponent:
-                          [s stringByAppendingPathComponent:@"usr/bin"]]];
-    }
-    return dirs;
-}
-
-- (void)spawnRespring {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *dirs = [self spToolDirs];
-    NSArray *chain = @[
-        @[@"sbreload", @[]],
-        @[@"killall",  @[@"-9", @"SpringBoard"]],
-    ];
-    for (NSArray *step in chain) {
-        NSString *tool = step[0];
-        NSArray *args = step[1];
-        for (NSString *dir in dirs) {
-            NSString *path = [dir stringByAppendingPathComponent:tool];
-            if (![fm isExecutableFileAtPath:path]) continue;
-            const char *argv[4] = {0};
-            argv[0] = path.UTF8String;
-            for (NSUInteger i = 0; i < args.count && i < 3; i++) argv[i + 1] = ((NSString *)args[i]).UTF8String;
-            pid_t pid = 0;
-            int rc = posix_spawn(&pid, path.UTF8String, NULL, NULL, (char *const *)argv, environ);
-            if (rc == 0) {
-                return; // 注销指令已发出 —— 不弹「正在注销中」提示（按操作方要求）
-            }
-        }
-    }
-    UIAlertController *f = [UIAlertController alertControllerWithTitle:@"未能自动注销"
-        message:@"没找到可用的 sbreload / killall。\n可手动运行 “sbreload”，或在越狱工具里选择「重启 SpringBoard」。"
-        preferredStyle:UIAlertControllerStyleAlert];
-    [f addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:f animated:YES completion:nil];
-}
-
 #pragma mark - 恢复默认（二次确认）
-- (void)confirmReset {
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"恢复默认设置？"
-        message:@"将清空 systemPro 的全部开关。此操作不可撤销。"
-        preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"清空" style:UIAlertActionStyleDestructive
-                                        handler:^(UIAlertAction *x) {
-        [[NSFileManager defaultManager] removeItemAtPath:SPPreferencesPath() error:nil];
-        notify_post(SP_NOTIFY_RELOAD);
-        self.prefs = SPPrefsLoad();
-        [self.contentTable reloadData];
-        [self updateHeroCount];
-        [self showToast:@"已恢复默认 · 建议注销"];
-    }]];
-    [self presentViewController:a animated:YES completion:nil];
-}
-
 @end

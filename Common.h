@@ -24,6 +24,14 @@
 #define SP_ENABLE_INTEGRITY_CHECK 0
 #endif
 
+// 诊断日志开关（默认 0 = 关闭）。
+// 关闭时所有 SPDiagLog 调用点都被 #if 剔除：不拼字符串、不写文件 —— 生产环境零开销。
+// 需要抓现场时改成 1 重新编译；日志路径 /var/mobile/Library/Logs/systemPro.log
+// （SSH 读取要加真实根前缀 /rootfs）。
+#ifndef SP_ENABLE_DIAG
+#define SP_ENABLE_DIAG 0
+#endif
+
 // ---------- 日志 ----------
 #define SPLog(fmt, ...) NSLog(@"[systemPro] " fmt, ##__VA_ARGS__)
 
