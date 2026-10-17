@@ -128,5 +128,6 @@ void SPDiagLog(NSString *line);
 #define kHideVPNFlyInAnimation       @"hideVPNFlyInAnimation"        // VPN 图标不飞入、瞬间出现
 #define kFakeBatteryPercent          @"fakeBatteryPercent"           // 伪装电量 1-100，0=关
 #define kRunIndicatorEnabled         @"runIndicatorEnabled"          // APP 运行指示点（名称替换为圆点）
+#define kHideIconDeleteMenu          @"hideIconDeleteMenu"           // 长按 App 菜单里去掉「删除 App」
 
 #endif

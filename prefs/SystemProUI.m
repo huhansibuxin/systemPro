@@ -697,6 +697,7 @@ static void SPPrefsWrite(NSString *key, id value) {
     UIColor *green  = [UIColor systemGreenColor];
     UIColor *teal   = [UIColor systemTealColor];
     UIColor *purple = [UIColor systemPurpleColor];
+    UIColor *red    = [UIColor systemRedColor];
 
     SPSection *main = [self section:@""
         footer:@"全部功能只注入 SpringBoard，改动即时生效；长按禁用 / 运行指示点建议注销一次做全量刷新。"
@@ -707,6 +708,7 @@ static void SPPrefsWrite(NSString *key, id value) {
             [self sw:kHideVPNFlyInAnimation title:@"VPN 图标不飞入" sub:@"VPN 图标瞬间出现，不播滑入动画" icon:@"bolt.slash.fill" tint:teal respring:NO],
             [self tx:kFakeBatteryPercent title:@"伪装电量（1-100，0=关）" icon:@"battery.75" def:@"0" numeric:YES],
             [self sw:kRunIndicatorEnabled title:@"APP 运行指示点" sub:@"运行中的 App，图标名称替换为 #A7C6FF 圆点" icon:@"circlebadge.fill" tint:purple respring:NO],
+            [self sw:kHideIconDeleteMenu title:@"长按菜单隐藏删除" sub:@"长按 App 的菜单里去掉「删除 App」，其它项保留" icon:@"trash.slash.fill" tint:red respring:NO],
         ]];
 
     SPRow *au = [SPRow kind:SPRowKindInfo key:nil title:@"作者" subtitle:nil icon:@"person" tint:[UIColor systemGrayColor]];

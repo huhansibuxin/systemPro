@@ -53,3 +53,35 @@ static BOOL SPEditBlockActive(void) {
     return %orig;
 }
 %end
+
+#pragma mark - 长按菜单：去掉「删除 App」
+// 长按图标弹出的菜单项由 SBHIconManager 组装（applicationShortcutItemsWithProposedItems:），
+// 返回的是菜单条目数组。这里按条目的 type/title 过滤掉删除/移除类动作，
+// 「编辑主屏幕」等其余项原样保留。
+static BOOL SPShortcutIsDeleteAction(id item) {
+    if (!item) return NO;
+    NSMutableString *sig = [NSMutableString string];
+    for (NSString *k in @[@"type", @"title", @"localizedTitle", @"identifier", @"displayName"]) {
+        @try {
+            id v = [item valueForKey:k];
+            if ([v isKindOfClass:[NSString class]]) [sig appendFormat:@" %@", v];
+        } @catch (NSException *e) {}
+    }
+    NSString *s = sig.lowercaseString;
+    return [s containsString:@"delete"] || [s containsString:@"remove"] ||
+           [s containsString:@"删除"] || [s containsString:@"移除"];
+}
+
+%hook SBHIconManager
+- (id)iconView:(id)iconView applicationShortcutItemsWithProposedItems:(id)items {
+    id ret = %orig;
+    if (!SPIsSpringBoard || !SPBool(kHideIconDeleteMenu)) return ret;
+    if (![ret isKindOfClass:[NSArray class]]) return ret;
+
+    NSMutableArray *kept = [NSMutableArray array];
+    for (id item in (NSArray *)ret) {
+        if (!SPShortcutIsDeleteAction(item)) [kept addObject:item];
+    }
+    return kept;
+}
+%end

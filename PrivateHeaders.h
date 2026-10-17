@@ -17,6 +17,7 @@
 @interface SBHIconManager : NSObject
 - (BOOL)iconViewDisplaysLabel:(id)iconView;
 - (void)setEditing:(BOOL)editing forIconLocation:(id)location;
+- (id)iconView:(id)iconView applicationShortcutItemsWithProposedItems:(id)items;
 @end
 
 @interface SBFolderView : UIView
