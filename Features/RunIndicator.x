@@ -206,14 +206,20 @@ static void SPRunIndicatorScheduleRefresh(void) {
 %end
 
 %hook SBIconView
-// 只做位置校正（不发进程查询）
+// 位置校正 + 补齐：SBIconView 的 _removeUnknownSubviews 会清掉非系统子视图，
+// 把我们的点删掉后就只剩系统那个小圆点（老板看到「大点变小点」就是这个）。
+// 这里发现点被摘掉就补回去（只有点存在时才做进程判定，开销可控）。
 - (void)layoutSubviews {
     %orig;
     UIView *dot = objc_getAssociatedObject(self, kSPDotKey);
-    if (dot && dot.superview == self) {
-        dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;   // 圆角始终跟尺寸一致
-        SPRunDotPosition(self, dot);
+    if (!dot) return;
+    if (dot.superview != self) {
+        if (!SPRunIndicatorActiveForView(self)) return;   // 不该显示就不补
+        [self addSubview:dot];
+        [self bringSubviewToFront:dot];
     }
+    dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;   // 圆角始终跟尺寸一致
+    SPRunDotPosition(self, dot);
 }
 %end
 
