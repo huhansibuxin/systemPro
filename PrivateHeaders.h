@@ -22,8 +22,7 @@
 // ---------- APP 运行指示点 ----------
 @interface SBIconView : UIView
 - (void)didMoveToWindow;
-- (void)_updateLabel;
-- (void)setLabelHidden:(BOOL)hidden;
+- (void)_updateLabel;      // 只用于「调用」，不 hook（返回类型无法静态确认）
 - (id)labelView;
 @end
 
@@ -31,11 +30,13 @@
 - (BOOL)iconViewDisplaysLabel:(id)iconView;
 @end
 
+// ⚠️ noteProcessDidExit: / launchProcessWithContext: 在 FrontBoard 的后台 call-out 队列回调，
+// 回调里绝不能直接动 UI（会触发 CA_ASSERT_MAIN_THREAD_TRANSACTIONS abort）。
 @interface FBProcessManager : NSObject
 + (id)sharedInstance;
 - (id)processesForBundleIdentifier:(id)bundleID;
 - (void)noteProcessDidExit:(id)process;
-- (id)launchProcessWithContext:(id)context;
+- (void)launchProcessWithContext:(id)context;
 @end
 
 // ---------- 伪装电量（对齐 SystemX 四个覆盖面） ----------
@@ -56,17 +57,17 @@
 // ---------- 状态栏：VPN 上色 / 隐藏原图标 / 去飞入 ----------
 // 状态栏容器（iOS16 实证）：每次数据更新的唯一入口，data 是 _UIStatusBarData，
 // 其中 vpnEntry.isEnabled = 状态栏是否显示 VPN 指示器（与用户所见一致的权威判据）。
+// ⚠️ 返回类型是 void（iOS 18 运行时头文件 + 崩溃日志双实证），写成 id 会被 ARC autorelease 垃圾值 → 崩。
 @interface _UIStatusBar : UIView
-- (id)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations;
+- (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations;
 @end
 
 // VPN 指示器本体（iOS16 dump: _UIStatusBarIndicatorVPNItem : _UIStatusBarIndicatorItem）
-// canEnableDisplayItem:fromData: 是 item 的显示门控（返回 NO = 不进布局、不占位）；
-// additionAnimationForDisplayItemWithIdentifier: 返回入场动画对象（返回 nil = 瞬间出现）。
+// 隐藏图标 = 让它取不到图（imageName 返回 nil，对 id 返回类型绝对安全）。
 @interface _UIStatusBarIndicatorVPNItem : NSObject
-- (BOOL)canEnableDisplayItem:(id)displayItem fromData:(id)data;
+- (id)imageNameForUpdate:(id)update;
+- (id)systemImageNameForUpdate:(id)update;
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier;
-- (id)applyUpdate:(id)update toDisplayItem:(id)displayItem;
 @end
 
 // WiFi 信号条（STUI 老样式：颜色通道；_UI 新样式：fillColor）

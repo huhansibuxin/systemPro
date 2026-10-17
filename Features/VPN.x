@@ -108,9 +108,12 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
 #pragma mark - 状态栏数据层刷新（每次更新唯一入口）
 
 %hook _UIStatusBar
-- (id)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations {
-    SPVPNRefreshFromData(data);   // 先刷新判定，再让系统枚举/更新各条目
-    return %orig;
+// ⚠️ 真实返回类型是 void（iOS 18 运行时头文件实证）。之前写成 id：
+// ARC 会对「返回的对象指针」做 objc_autoreleaseReturnValue，而 void 方法返回的是垃圾值
+// → autorelease 非对象 → SpringBoard 崩溃进安全模式。
+- (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations {
+    SPVPNRefreshFromData(data);   // 先刷新判定，再让系统更新各条目
+    %orig;
 }
 %end
 
@@ -191,25 +194,18 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
 %end
 
 #pragma mark - 钩子：上色生效时隐藏原版带方框的 VPN 图标
-// 双保险：
-//  1) canEnableDisplayItem:fromData: 返回 NO —— item 不进布局，连占位都不留（首选）；
-//  2) applyUpdate:toDisplayItem: 事后把 displayItem 的 view 隐藏 —— 万一 1) 不被调用，
-//     也保证图标不可见。
+// 方式：让 VPN 指示器取不到图（imageName 返回 nil）——返回 nil 对 id 返回类型绝对安全，
+// 不走 BOOL 返回的门控方法（canEnableDisplayItem:fromData: 真实返回类型无法静态确认，
+// 写错 BOOL/id 会在 ABI 上互撞：BOOL→id 会让调用方把 0x1 当对象指针用）。
 
 %hook _UIStatusBarIndicatorVPNItem
-- (BOOL)canEnableDisplayItem:(id)displayItem fromData:(id)data {
-    if (SPVPNColorGate()) return NO;   // 上色生效 → 原版 VPN 图标不显示
+- (id)imageNameForUpdate:(id)update {
+    if (SPVPNColorGate()) return nil;   // 上色生效 → 原版 VPN 图标不显示
     return %orig;
 }
-- (id)applyUpdate:(id)update toDisplayItem:(id)displayItem {
-    id ret = %orig;
-    if (SPVPNColorGate()) {
-        @try {
-            UIView *v = [displayItem valueForKey:@"view"];
-            if ([v isKindOfClass:[UIView class]]) v.hidden = YES;
-        } @catch (NSException *e) {}
-    }
-    return ret;
+- (id)systemImageNameForUpdate:(id)update {
+    if (SPVPNColorGate()) return nil;
+    return %orig;
 }
 // VPN 图标不飞入：入场动画对象返回 nil = 瞬间出现
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier {

@@ -215,8 +215,10 @@ static void SPPrefsWrite(NSString *key, id value) {
 @implementation SPCell
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
+        // 卡片底色显式指定（insetGrouped 下部分行缺省透明会呈灰）
+        self.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
+
         _chip = [UIView new];
-        _chip.translatesAutoresizingMaskIntoConstraints = NO;
         _chip.layer.cornerRadius = 7.0;
         _chip.layer.cornerCurve = kCACornerCurveContinuous;
         [self.contentView addSubview:_chip];
@@ -224,25 +226,20 @@ static void SPPrefsWrite(NSString *key, id value) {
         _rowIcon = [UIImageView new];
         _rowIcon.tintColor = [UIColor whiteColor];
         _rowIcon.contentMode = UIViewContentModeCenter;
-        _rowIcon.translatesAutoresizingMaskIntoConstraints = NO;
         [_chip addSubview:_rowIcon];
 
         _titleLabel = [UILabel new];
         _titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightRegular];
         _titleLabel.numberOfLines = 0;
-        _titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
         [self.contentView addSubview:_titleLabel];
 
         _subLabel = [UILabel new];
         _subLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
         _subLabel.textColor = [UIColor secondaryLabelColor];
         _subLabel.numberOfLines = 0;
-        _subLabel.translatesAutoresizingMaskIntoConstraints = NO;
-        _subZero = [_subLabel.heightAnchor constraintEqualToConstant:0];
         [self.contentView addSubview:_subLabel];
 
         _toggle = [UISwitch new];
-        _toggle.translatesAutoresizingMaskIntoConstraints = NO;
         _toggle.onTintColor = [UIColor colorWithRed:0.36 green:0.34 blue:0.92 alpha:1];
         [_toggle addTarget:self action:@selector(toggleChanged:) forControlEvents:UIControlEventValueChanged];
         [self.contentView addSubview:_toggle];
@@ -250,56 +247,98 @@ static void SPPrefsWrite(NSString *key, id value) {
         _valueLabel = [UILabel new];
         _valueLabel.font = [UIFont systemFontOfSize:15];
         _valueLabel.textColor = [UIColor secondaryLabelColor];
-        _valueLabel.translatesAutoresizingMaskIntoConstraints = NO;
+        _valueLabel.textAlignment = NSTextAlignmentRight;
         [self.contentView addSubview:_valueLabel];
 
         _chevron = [[UIImageView alloc] initWithImage:
             [UIImage systemImageNamed:@"chevron.right" withConfiguration:
                 [UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
         _chevron.tintColor = [UIColor tertiaryLabelColor];
-        _chevron.translatesAutoresizingMaskIntoConstraints = NO;
         [self.contentView addSubview:_chevron];
 
-        [NSLayoutConstraint activateConstraints:@[
-            [_chip.leadingAnchor constraintEqualToAnchor:self.contentView.leadingAnchor constant:16],
-            [_chip.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-            [_chip.widthAnchor constraintEqualToConstant:26],
-            [_chip.heightAnchor constraintEqualToConstant:26],
-            [_rowIcon.centerXAnchor constraintEqualToAnchor:_chip.centerXAnchor],
-            [_rowIcon.centerYAnchor constraintEqualToAnchor:_chip.centerYAnchor],
-            [_titleLabel.leadingAnchor constraintEqualToAnchor:_chip.trailingAnchor constant:12],
-            [_titleLabel.topAnchor constraintEqualToAnchor:self.contentView.topAnchor constant:12],
-            [_subLabel.leadingAnchor constraintEqualToAnchor:_titleLabel.leadingAnchor],
-            [_subLabel.topAnchor constraintEqualToAnchor:_titleLabel.bottomAnchor constant:1],
-            [_subLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-8],
-            [_subLabel.bottomAnchor constraintEqualToAnchor:self.contentView.bottomAnchor constant:-12],
-            [_toggle.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-            [_toggle.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-            [_valueLabel.trailingAnchor constraintEqualToAnchor:_chevron.leadingAnchor constant:-6],
-            [_valueLabel.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-            [_chevron.trailingAnchor constraintEqualToAnchor:self.contentView.trailingAnchor constant:-16],
-            [_chevron.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-        ]];
-        // 滑块（SPRowKindSlider 专用；其他行隐藏）
         _slider = [UISlider new];
-        _slider.translatesAutoresizingMaskIntoConstraints = NO;
         _slider.minimumTrackTintColor = _toggle.onTintColor;
         _slider.hidden = YES;
         [_slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
         [self.contentView addSubview:_slider];
-
-        // title 右侧避让：普通行让给开关；滑块行让给滑块
-        _titleToToggle = [_titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_toggle.leadingAnchor constant:-8];
-        _titleToSlider = [_titleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_slider.leadingAnchor constant:-8];
-        [NSLayoutConstraint activateConstraints:@[
-            [_slider.trailingAnchor constraintEqualToAnchor:_valueLabel.leadingAnchor constant:-8],
-            [_slider.centerYAnchor constraintEqualToAnchor:self.contentView.centerYAnchor],
-            [_slider.widthAnchor constraintEqualToConstant:140],
-        ]];
-        _titleToToggle.active = YES;
     }
     return self;
 }
+
+// ============================================================
+// 手工 frame 布局（不用 Auto Layout）
+// 原因：insetGrouped + 自适应高度下约束会解不开，开关被挤出卡片右侧，
+// 超出 cell 边界后 hitTest 收不到触摸 —— 表现为「布局错乱 + 开关点不开」。
+// ============================================================
++ (CGFloat)textHeight:(NSString *)text font:(UIFont *)font width:(CGFloat)width {
+    if (!text.length || width <= 0) return 0;
+    return ceil([text boundingRectWithSize:CGSizeMake(width, CGFLOAT_MAX)
+                                   options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                attributes:@{ NSFontAttributeName: font }
+                                   context:nil].size.height);
+}
+
+// 控制器算行高：给定卡片宽度，返回该行需要的高度
++ (CGFloat)heightForRow:(SPRow *)row cardWidth:(CGFloat)cardWidth {
+    CGFloat accessW = 0;
+    if (row.kind == SPRowKindSwitch)      accessW = 51.0 + 8.0;
+    else if (row.kind == SPRowKindSlider) accessW = 140.0 + 8.0 + 44.0 + 8.0;
+    CGFloat textW = MAX(80.0, cardWidth - 16.0 - 26.0 - 12.0 - 16.0 - accessW);
+    CGFloat h = [self textHeight:row.title font:[UIFont systemFontOfSize:16] width:textW];
+    if (row.subtitle.length) {
+        h += 1.0 + [self textHeight:row.subtitle font:[UIFont systemFontOfSize:12] width:textW];
+    }
+    return MAX(58.0, h + 24.0);
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat W = self.contentView.bounds.size.width;
+    CGFloat H = self.contentView.bounds.size.height;
+    const CGFloat padL = 16.0, padR = 16.0, chipS = 26.0, gap = 12.0;
+
+    // 左侧图标块
+    self.chip.frame = CGRectMake(padL, (H - chipS) / 2.0, chipS, chipS);
+    self.rowIcon.frame = self.chip.bounds;
+
+    // 右侧控件占位
+    CGFloat accessW = 0;
+    if (!self.toggle.hidden)      accessW = 51.0 + 8.0;
+    else if (!self.slider.hidden) accessW = 140.0 + 8.0 + 44.0 + 8.0;
+
+    CGFloat textX = padL + chipS + gap;
+    CGFloat textW = MAX(80.0, W - textX - padR - accessW);
+
+    CGFloat titleH = [SPCell textHeight:self.titleLabel.text font:self.titleLabel.font width:textW];
+    CGFloat subH   = self.subLabel.hidden ? 0.0
+                     : [SPCell textHeight:self.subLabel.text font:self.subLabel.font width:textW];
+    CGFloat totalH = titleH + (subH > 0 ? subH + 1.0 : 0.0);
+    CGFloat y = MAX(12.0, (H - totalH) / 2.0);
+
+    self.titleLabel.frame = CGRectMake(textX, y, textW, titleH);
+    self.subLabel.frame   = CGRectMake(textX, y + titleH + (subH > 0 ? 1.0 : 0.0), textW, subH);
+
+    // 开关：永远贴在卡片右侧内边距里（不会越界）
+    if (!self.toggle.hidden) {
+        self.toggle.frame = CGRectMake(W - padR - 51.0, (H - 31.0) / 2.0, 51.0, 31.0);
+    }
+
+    // 右侧数值 + 箭头（右对齐）
+    CGFloat rightX = W - padR;
+    if (!self.chevron.hidden) {
+        self.chevron.frame = CGRectMake(rightX - 8.0, (H - 13.0) / 2.0, 8.0, 13.0);
+        rightX -= (8.0 + 6.0);
+    }
+    if (!self.valueLabel.hidden) {
+        CGFloat vw = MIN(200.0, MAX(40.0, rightX - textX - 8.0));
+        self.valueLabel.frame = CGRectMake(rightX - vw, (H - 20.0) / 2.0, vw, 20.0);
+        rightX -= (vw + 8.0);
+    }
+    if (!self.slider.hidden) {
+        self.slider.frame = CGRectMake(MAX(textX, rightX - 140.0), (H - 31.0) / 2.0, 140.0, 31.0);
+    }
+}
+
 - (void)toggleChanged:(UISwitch *)sw {
     if (self.onToggle) self.onToggle(sw.isOn);
 }
@@ -598,12 +637,17 @@ static void SPPrefsWrite(NSString *key, id value) {
     self.prefs = SPPrefsLoad();
 }
 
-// 自绘行高全部交给 Auto Layout
+// 行高：手工按文本算（配合 SPCell 的 frame 布局；不用 UITableViewAutomaticDimension，
+// 避免 insetGrouped 下自适应高度与约束冲突导致开关越界/点不到）
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return UITableViewAutomaticDimension;
+    SPRow *row = [self spRowAtIndexPath:indexPath];
+    if (!row) return 44.0;
+    // insetGrouped 卡片宽度 = 表宽 - 左右内边距（取 40 保守值，宁可略高不裁字）
+    CGFloat cardW = MAX(200.0, tableView.bounds.size.width - 40.0);
+    return [SPCell heightForRow:row cardWidth:cardW];
 }
 - (CGFloat)tableView:(UITableView *)tableView estimatedHeightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    return 58;
+    return [self tableView:tableView heightForRowAtIndexPath:indexPath];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -658,7 +702,7 @@ static void SPPrefsWrite(NSString *key, id value) {
         footer:@"全部功能只注入 SpringBoard，改动即时生效；长按禁用 / 运行指示点建议注销一次做全量刷新。"
         rows:@[
             [self sw:kNoLockAfterRespring title:@"注销不锁屏" sub:@"注销/重启后直接进入桌面，不回锁屏" icon:@"lock.open.fill" tint:green respring:NO],
-            [self sw:kDisableHomeScreenLongPress title:@"长按桌面禁用" sub:@"长按桌面/图标不再进入编辑模式：不抖动、无任何动作（3D Touch 菜单保留）" icon:@"hand.point.up.left.fill" tint:indigo respring:NO],
+            [self sw:kDisableHomeScreenLongPress title:@"长按桌面禁用" sub:@"长按不进编辑模式：不抖动、无动作（3D Touch 保留）" icon:@"hand.point.up.left.fill" tint:indigo respring:NO],
             [self sw:kColorizeVPNStatusBar title:@"VPN 上色" sub:@"VPN 连接时 VPN/WiFi/蜂窝变为 #A7C6FF，并隐藏原版 VPN 图标" icon:@"shield.lefthalf.filled" tint:blue respring:NO],
             [self sw:kHideVPNFlyInAnimation title:@"VPN 图标不飞入" sub:@"VPN 图标瞬间出现，不播滑入动画" icon:@"bolt.slash.fill" tint:teal respring:NO],
             [self tx:kFakeBatteryPercent title:@"伪装电量（1-100，0=关）" icon:@"battery.75" def:@"0" numeric:YES],

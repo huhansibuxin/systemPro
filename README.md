@@ -1,6 +1,6 @@
 # systemPro
 
-标识符 `com.sytem.pro` · 作者 **D** · 当前版本 **1.0.0-1**
+标识符 `com.sytem.pro` · 作者 **D** · 当前版本 **1.0.0-2**
 
 systemPro 精简版：从 duck1001/systemPro（38 项功能）裁到 **6 项刚需**，全部只注入 **SpringBoard**。
 功能面移植自 SystemX（com.wkk.systembox）逆向成果（机制均有 iOS16 运行时 dump 实证），
