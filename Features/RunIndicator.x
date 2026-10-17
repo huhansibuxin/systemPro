@@ -133,7 +133,11 @@ static void SPRunDotDiagState(SBIconView *iconView, NSString *phase) {
     SPDiagLog(line);
 }
 
-// 把圆点装到图标视图上。位置交给 Auto Layout 约束：一次设定，layout 阶段零额外代码。
+// 把圆点装到图标视图上。
+// 位置策略（老板实测校准）：
+//   • 首页/文件夹图标：锚到**名称视图**的 centerX/centerY —— 点和文字在同一条直线上
+//   • Dock 图标：图标视图里全是图标本体，任何内缩位置都会压在图标上 → 放到图标正下方 2pt
+// 全部用 Auto Layout 约束，一次设定，layout 阶段零额外代码。
 static UIView *SPRunDotInstall(SBIconView *iconView) {
     UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
     if (!dot) {
@@ -146,14 +150,27 @@ static UIView *SPRunDotInstall(SBIconView *iconView) {
     }
     if (dot.superview != iconView) {
         [iconView addSubview:dot];
-        [NSLayoutConstraint activateConstraints:@[
-            [dot.widthAnchor     constraintEqualToConstant:SP_DOT_SIZE],
-            [dot.heightAnchor    constraintEqualToConstant:SP_DOT_SIZE],
-            [dot.centerXAnchor   constraintEqualToAnchor:iconView.centerXAnchor],
-            // 贴到名称行（≈ 图标视图底部）：老板实测「正常位置」就在这里；
-            // 之前 -10 偏高，看起来像压在图标上
-            [dot.bottomAnchor    constraintEqualToAnchor:iconView.bottomAnchor constant:-1.0],
-        ]];
+
+        NSString *superName = iconView.superview ? NSStringFromClass([iconView.superview class]) : @"";
+        BOOL isDock = [superName containsString:@"Dock"];
+        UIView *labelView = SPRunLabelView(iconView);
+
+        NSMutableArray *cs = [@[
+            [dot.widthAnchor  constraintEqualToConstant:SP_DOT_SIZE],
+            [dot.heightAnchor constraintEqualToConstant:SP_DOT_SIZE],
+        ] mutableCopy];
+
+        if (isDock) {
+            [cs addObject:[dot.centerXAnchor constraintEqualToAnchor:iconView.centerXAnchor]];
+            [cs addObject:[dot.topAnchor constraintEqualToAnchor:iconView.bottomAnchor constant:2.0]];
+        } else if (labelView) {
+            [cs addObject:[dot.centerXAnchor constraintEqualToAnchor:labelView.centerXAnchor]];
+            [cs addObject:[dot.centerYAnchor constraintEqualToAnchor:labelView.centerYAnchor]];
+        } else {
+            [cs addObject:[dot.centerXAnchor constraintEqualToAnchor:iconView.centerXAnchor]];
+            [cs addObject:[dot.bottomAnchor constraintEqualToAnchor:iconView.bottomAnchor constant:-1.0]];
+        }
+        [NSLayoutConstraint activateConstraints:cs];
     }
     [iconView bringSubviewToFront:dot];
     return dot;
@@ -256,10 +273,14 @@ static void SPRunIndicatorScheduleRefreshDelayed(void) {
 }
 %end
 
-// 视图进入窗口时补一次（Dock / 新页面首次出现走这条路；代理视图被 SPRunIconViewInList 挡掉）。
-// 只在「进入窗口」这个事件里执行，不是每帧。
+// 视图进入窗口 / 被移动到新的父视图时各补一次（Dock、新页面、拖动移动图标都走这两条路；
+// 代理视图被 SPRunIconViewInList 挡掉）。都是「事件」触发，不是每帧。
 %hook SBIconView
 - (void)didMoveToWindow {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) SPRunIndicatorApply(self);
+}
+- (void)didMoveToSuperview {
     %orig;
     if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) SPRunIndicatorApply(self);
 }

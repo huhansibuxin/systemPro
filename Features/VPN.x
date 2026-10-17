@@ -159,6 +159,20 @@ static BOOL SPIsWifiSignalView(id view) {
     return [cn containsString:@"Wifi"];
 }
 
+// 一次性诊断：记录「实际被我们染色」的视图类名。
+// 用来定位「主屏不染、只有控制中心染」——如果主屏那个实例的类名从没出现，说明它走的是另一条通道。
+static void SPVPNTintDiag(id view, const char *via) {
+    static NSMutableSet *seen = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ seen = [NSMutableSet set]; });
+    NSString *key = [NSString stringWithFormat:@"%s:%@", via, NSStringFromClass([view class])];
+    @synchronized (seen) {
+        if ([seen containsObject:key]) return;
+        [seen addObject:key];
+    }
+    SPDiagLog([NSString stringWithFormat:@"tint %s view=%@", via, NSStringFromClass([view class])]);
+}
+
 %hook _UIStatusBarSignalView
 - (void)setActiveColor:(id)color {
     if (SPVPNColorGate() && SPIsWifiSignalView(self)) {
@@ -180,11 +194,12 @@ static BOOL SPIsWifiSignalView(id view) {
     @try {
         ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setActiveColor:), SPTintColor());
         ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setInactiveColor:), SPTintColor());
+        SPVPNTintDiag(self, "style");
     } @catch (NSException *e) {}
 }
 %end
 
-// WiFi 信号条（STUI 老样式）
+// WiFi 信号条（STUI 老样式）—— 同样要管 applyStyleAttributes:，否则样式刷新会把颜色冲回去
 %hook STUIStatusBarWifiSignalView
 - (void)setActiveColor:(id)color {
     UIColor *spc = color;
@@ -195,6 +210,15 @@ static BOOL SPIsWifiSignalView(id view) {
     UIColor *spc = color;
     if (SPVPNColorGate()) spc = SPTintColor();
     %orig(spc);
+}
+- (void)applyStyleAttributes:(id)attributes {
+    %orig;
+    if (!SPVPNColorGate()) return;
+    @try {
+        [(id)self setActiveColor:SPTintColor()];
+        [(id)self setInactiveColor:SPTintColor()];
+        SPVPNTintDiag(self, "stui-style");
+    } @catch (NSException *e) {}
 }
 %end
 

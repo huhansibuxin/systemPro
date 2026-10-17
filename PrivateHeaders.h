@@ -29,7 +29,8 @@
 
 // ---------- APP 运行指示点 ----------
 @interface SBIconView : UIView
-- (void)layoutSubviews;
+- (void)didMoveToWindow;
+- (void)didMoveToSuperview;
 - (void)_updateLabel;      // 只用于「调用」，不 hook（返回类型无法静态确认）
 - (id)labelView;
 @end
