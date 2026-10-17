@@ -8,6 +8,8 @@
 #import "Common.h"
 #import "PrivateHeaders.h"
 #import "Prefs.h"
+#import <mach-o/dyld.h>
+#import <string.h>
 
 BOOL SPIsSpringBoard = NO;
 BOOL SPGatePassed    = YES;
@@ -110,6 +112,25 @@ static BOOL SPIntegrityCheckPasses(void) {
         SPDiagReset();                 // 清空上一版日志，只保留本 BOOT 现场
         SPDiagLog([NSString stringWithFormat:@"ctor sb=%d tint=%@ jbroot=%@",
                    SPIsSpringBoard, SPTintColor(), SPJailbreakRoot() ?: @"(none)"]);
+
+        // 记录真正加载进 SpringBoard 的可疑 tweak dylib —— 用于定位「谁在画那个 6pt 小点」
+        // （Choicy 在 ElleKit 下可能挡不住注入，所以直接看真实加载列表最可靠）
+        {
+            static const char *kSuspects[] = {
+                "SystemBox", "SOISM", "Squid", "Sneaky", "SnapVision", "Snapper",
+                "Unseen", "PerfectDynamic", "NotificationIsland", "TrollGesture", "CallAssist"
+            };
+            for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+                const char *n = _dyld_get_image_name(i);
+                if (!n) continue;
+                for (size_t k = 0; k < sizeof(kSuspects) / sizeof(kSuspects[0]); k++) {
+                    if (strstr(n, kSuspects[k])) {
+                        SPDiagLog([NSString stringWithFormat:@"dylib loaded: %s", n]);
+                        break;
+                    }
+                }
+            }
+        }
 
         // 诊断：把解析结果和当前开关状态打到日志（syslog / Console 可查）
         SPLog(@"jbroot=%@ prefsPath=%@", SPJailbreakRoot() ?: @"(none)", SPPreferencesPath());

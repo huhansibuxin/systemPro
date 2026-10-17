@@ -110,7 +110,16 @@ static void SPRunDotDiagState(SBIconView *iconView, NSString *phase) {
         BOOL small = (f.size.width > 0 && f.size.width <= 14.0) || (f.size.height > 0 && f.size.height <= 14.0);
         if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] ||
             [cn containsString:@"Accessory"] || small) {
-            [line appendFormat:@" [%@ %@%@%@]", cn, NSStringFromCGRect(f),
+            // 指纹：背景色 / 圆角 / tag —— 不同插件画点时特征不同，用来锁定归属
+            UIColor *bg = sv.backgroundColor;
+            CGFloat cr = sv.layer.cornerRadius;
+            [line appendFormat:@" [%@ %@ bg=%@ r=%.1f tag=%ld%@%@]", cn, NSStringFromCGRect(f),
+                               bg ? [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%.2f",
+                                     CGColorGetComponents(bg.CGColor)[0],
+                                     CGColorGetComponents(bg.CGColor)[1],
+                                     CGColorGetComponents(bg.CGColor)[2],
+                                     CGColorGetNumberOfComponents(bg.CGColor) > 3 ? CGColorGetComponents(bg.CGColor)[3] : 1.0] : @"nil",
+                               cr, (long)sv.tag,
                                sv.hidden ? @" hidden" : @"", sv.superview == iconView ? @"" : @" detached"];
             n++;
         }
@@ -141,7 +150,9 @@ static UIView *SPRunDotInstall(SBIconView *iconView) {
             [dot.widthAnchor     constraintEqualToConstant:SP_DOT_SIZE],
             [dot.heightAnchor    constraintEqualToConstant:SP_DOT_SIZE],
             [dot.centerXAnchor   constraintEqualToAnchor:iconView.centerXAnchor],
-            [dot.bottomAnchor    constraintEqualToAnchor:iconView.bottomAnchor constant:-10.0],  // 名称行
+            // 贴到名称行（≈ 图标视图底部）：老板实测「正常位置」就在这里；
+            // 之前 -10 偏高，看起来像压在图标上
+            [dot.bottomAnchor    constraintEqualToAnchor:iconView.bottomAnchor constant:-1.0],
         ]];
     }
     [iconView bringSubviewToFront:dot];
