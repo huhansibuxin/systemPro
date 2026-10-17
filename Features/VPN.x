@@ -240,9 +240,6 @@ static void SPStatusBarTreeDiag(UIView *root) {
     // 未开启时完全不做后续遍历
     if (!vpnOn) return ret;
 
-    UIColor *originalColor = nil;
-    @try { originalColor = [[update styleAttributes] textColor]; } @catch (NSException *e) {}
-
     @try {
         Class ntClass = SPNetTypeViewClass();
         Class svClass = SPStringViewClass();
