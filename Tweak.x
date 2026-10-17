@@ -19,6 +19,34 @@ UIColor *SPTintColor(void) {
     return [UIColor colorWithRed:167.0/255.0 green:198.0/255.0 blue:255.0/255.0 alpha:1.0];
 }
 
+// ---------- 轻量诊断日志 ----------
+// 每次 SpringBoard 启动清空重建（只保留当前这轮现场）；追加写，调用点都很稀疏。
+static NSString *SPDiagPath(void) {
+    return @"/var/mobile/Library/Logs/systemPro.log";
+}
+
+void SPDiagReset(void) {
+    NSString *head = [NSString stringWithFormat:@"=== systemPro boot %@ ===\n", [NSDate date]];
+    [[head dataUsingEncoding:NSUTF8StringEncoding] writeToFile:SPDiagPath() atomically:YES];
+}
+
+void SPDiagLog(NSString *line) {
+    if (!line.length) return;
+    @synchronized ([SPDiagLog class]) {
+        NSString *entry = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], line];
+        NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:SPDiagPath()];
+        if (!fh) {
+            [[entry dataUsingEncoding:NSUTF8StringEncoding] writeToFile:SPDiagPath() atomically:YES];
+            return;
+        }
+        @try {
+            [fh seekToEndOfFile];
+            [fh writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+            [fh closeFile];
+        } @catch (NSException *e) {}
+    }
+}
+
 // ---------- dpkg-status 自检（可选门禁） ----------
 #if SP_ENABLE_INTEGRITY_CHECK
 #define SP_PKG_ID     @"com.sytem.pro"
@@ -74,6 +102,10 @@ static BOOL SPIntegrityCheckPasses(void) {
         if (!SPGatePassed) { SPLog(@"gate failed, tweak inert"); return; }
 #endif
         (void)[SPPrefs shared];        // 懒加载 + 挂 Darwin 通知
+
+        SPDiagReset();                 // 清空上一版日志，只保留本 BOOT 现场
+        SPDiagLog([NSString stringWithFormat:@"ctor sb=%d tint=%@ jbroot=%@",
+                   SPIsSpringBoard, SPTintColor(), SPJailbreakRoot() ?: @"(none)"]);
 
         // 诊断：把解析结果和当前开关状态打到日志（syslog / Console 可查）
         SPLog(@"jbroot=%@ prefsPath=%@", SPJailbreakRoot() ?: @"(none)", SPPreferencesPath());

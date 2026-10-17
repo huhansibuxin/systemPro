@@ -27,7 +27,7 @@ static const void *kSPDotKey       = &kSPDotKey;
 static const void *kSPHidLabelKey  = &kSPHidLabelKey;
 static NSHashTable *gSPIconViews   = nil;
 
-static const CGFloat SP_DOT_SIZE = 10.0;              // 直径 10pt（6→8→10，老板要求再大一点）
+static const CGFloat SP_DOT_SIZE = 8.0;               // 直径 8pt（10pt 实测偏大，老板要求减 2pt）
 
 // 老板指定：指示点颜色 = 电池充电图标的绿色
 static UIColor *SPRunDotColor(void) {
@@ -105,7 +105,32 @@ static BOOL SPRunIndicatorActiveForView(SBIconView *iconView) {
     return SPRunIndicatorAppIsRunning(SPRunIndicatorBundleID(iconView));
 }
 
+// 一次性诊断：记录图标视图上的「点状」子视图（类名/尺寸/是否隐藏），
+// 万一还有尺寸不一/双点，直接看 /var/mobile/Library/Logs/systemPro.log 就能定位是谁画的。
+static void SPRunDotDiag(SBIconView *iconView) {
+    static NSMutableSet *seen = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ seen = [NSMutableSet set]; });
+    NSString *key = [NSString stringWithFormat:@"%p", iconView];
+    @synchronized (seen) {
+        if ([seen containsObject:key]) return;
+        [seen addObject:key];
+    }
+    NSMutableString *line = [NSMutableString stringWithFormat:@"icon=%@ super=%@ bounds=%@ dots:",
+                             NSStringFromClass([iconView class]),
+                             NSStringFromClass([iconView.superview class]),
+                             NSStringFromCGRect(iconView.bounds)];
+    for (UIView *sv in iconView.subviews) {
+        NSString *cn = NSStringFromClass([sv class]);
+        if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] || [cn containsString:@"Accessory"]) {
+            [line appendFormat:@" [%@ %@%@]", cn, NSStringFromCGRect(sv.frame), sv.hidden ? @" hidden" : @""];
+        }
+    }
+    SPDiagLog(line);
+}
+
 static void SPRunIndicatorApply(SBIconView *iconView) {
+    SPRunDotDiag(iconView);
     BOOL active = SPRunIndicatorActiveForView(iconView);
     UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
     BOOL weHid = [objc_getAssociatedObject(iconView, kSPHidLabelKey) boolValue];
@@ -185,7 +210,24 @@ static void SPRunIndicatorScheduleRefresh(void) {
 - (void)layoutSubviews {
     %orig;
     UIView *dot = objc_getAssociatedObject(self, kSPDotKey);
-    if (dot && dot.superview == self) SPRunDotPosition(self, dot);
+    if (dot && dot.superview == self) {
+        dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;   // 圆角始终跟尺寸一致
+        SPRunDotPosition(self, dot);
+    }
+}
+%end
+
+// 系统自带的「小圆点」label accessory（SBIconDotLabelAccessoryView，约 4-5pt）：
+// 隐藏图标名称后它有时会冒出来，和我们 8pt 的点并存 → 老板看到「两个点、大小还不一样」。
+// 本功能开启时一律隐藏系统圆点，只保留我们自己的绿点。
+%hook SBIconDotLabelAccessoryView
+- (void)didMoveToSuperview {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
+}
+- (void)layoutSubviews {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
 }
 %end
 

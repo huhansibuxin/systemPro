@@ -114,6 +114,12 @@ NSString *SPString(NSString *key, NSString *def);
 // 默认值取自老板设备 SystemX 配置文件实读：RGB(167,198,255) = #A7C6FF。
 UIColor *SPTintColor(void);
 
+// ---------- 轻量诊断日志 ----------
+// 写到 /var/mobile/Library/Logs/systemPro.log（SpringBoard 可写）。
+// 每次 SpringBoard 启动（%ctor）清空重建，只记当前这一轮的现场，避免旧日志干扰。
+void SPDiagReset(void);
+void SPDiagLog(NSString *line);
+
 // ---------- 开关键名（与 SystemX 对齐；设置面板同一套） ----------
 // General
 #define kNoLockAfterRespring         @"noLockAfterRespring"          // 注销/重启后直接进桌面

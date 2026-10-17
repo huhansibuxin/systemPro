@@ -29,10 +29,14 @@
 
 // ---------- APP 运行指示点 ----------
 @interface SBIconView : UIView
-
 - (void)layoutSubviews;
 - (void)_updateLabel;      // 只用于「调用」，不 hook（返回类型无法静态确认）
 - (id)labelView;
+@end
+
+// 系统自带的标签小圆点 accessory（约 4-5pt）。图标名称隐藏后它可能冒出来，
+// 和我们自己 8pt 的点并存 → 表现为「两个点、大小不一样」。功能开启时统一隐藏。
+@interface SBIconDotLabelAccessoryView : UIView
 @end
 
 // ⚠️ noteProcessDidExit: / launchProcessWithContext: 在 FrontBoard 的后台 call-out 队列回调，
