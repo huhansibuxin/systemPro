@@ -74,6 +74,12 @@
 - (BOOL)areAnimationsEnabled;
 @end
 
+// 状态栏图标图（iOS16：WiFi/电池等图标是这里的模板图，颜色 = tintColor）
+@interface _UIStatusBarImageView : UIImageView
+- (void)setTintColor:(UIColor *)color;
+- (void)applyStyleAttributes:(id)attributes;
+@end
+
 // VPN 指示器本体（iOS16 dump: _UIStatusBarIndicatorVPNItem : _UIStatusBarIndicatorItem）
 // 隐藏图标 = 让它取不到图（imageName 返回 nil，对 id 返回类型绝对安全）。
 @interface _UIStatusBarIndicatorVPNItem : NSObject

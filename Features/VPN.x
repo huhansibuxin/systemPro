@@ -117,7 +117,67 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
                                                   attributes:@{ NSForegroundColorAttributeName: c }];
 }
 
-#pragma mark - 状态栏数据层刷新（每次更新唯一入口）
+#pragma mark - 状态栏视图树诊断（一次性）
+// 把 _UIStatusBar 整棵子树的类名抓出来 —— 主屏状态栏的 WiFi 图标到底是哪个类画的，一眼可见。
+// ⚠️ 每个 _UIStatusBar 实例各记一次（老板实测：App 内染色、主屏不染 → 两个实例可能不是同一套类）。
+static void SPStatusBarTreeDiag(UIView *root) {
+    static NSMutableSet *logged = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ logged = [NSMutableSet set]; });
+    if (!root) return;
+    NSString *key = [NSString stringWithFormat:@"%p", root];
+    @synchronized (logged) {
+        if ([logged containsObject:key]) return;
+        [logged addObject:key];
+    }
+    NSMutableString *line = [NSMutableString stringWithFormat:@"sb-tree(%@):", NSStringFromClass([root class])];
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:root];
+    int count = 0;
+    while (queue.count && count < 150) {
+        UIView *v = [queue objectAtIndex:0];
+        [queue removeObjectAtIndex:0];
+        count++;
+        [line appendFormat:@" %@", NSStringFromClass([v class])];
+        for (UIView *s in v.subviews) [queue addObject:s];
+    }
+    SPDiagLog(line);
+}
+
+#pragma mark - 钩子：状态栏图标染色（模板图 + tintColor 通道）
+// iOS16 主屏状态栏的图标（WiFi/电池等）是 _UIStatusBarImageView 里的模板图，
+// 颜色来自样式的前景色 —— 之前挂的「信号视图颜色」通道根本不在这条路上（日志实证 tint 为空）。
+// 做法：WiFi 语境下的模板图强制 AlwaysTemplate + tintColor = 我们的淡蓝；蜂窝信号塔不动。
+static BOOL SPImageViewIsWifiContext(UIView *v) {
+    UIView *p = v.superview;
+    for (int i = 0; p && i < 5; i++, p = p.superview) {
+        NSString *cn = NSStringFromClass([p class]);
+        if ([cn containsString:@"Wifi"]) return YES;
+        if ([cn containsString:@"Cellular"] || [cn containsString:@"Battery"]) return NO;
+    }
+    return NO;
+}
+
+%hook _UIStatusBarImageView
+- (void)setTintColor:(UIColor *)color {
+    if (SPVPNColorGate() && SPImageViewIsWifiContext(self)) {
+        %orig(SPTintColor());
+        SPVPNTintDiag(self, "iv-tint");
+        return;
+    }
+    %orig;
+}
+- (void)applyStyleAttributes:(id)attributes {
+    %orig;
+    if (!SPVPNColorGate() || !SPImageViewIsWifiContext(self)) return;
+    @try {
+        self.image = [self.image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        self.tintColor = SPTintColor();
+        SPVPNTintDiag(self, "iv-style");
+    } @catch (NSException *e) {}
+}
+%end
+
+#pragma mark - 钩子：状态栏数据层刷新（每次更新唯一入口）
 
 %hook _UIStatusBar
 // ⚠️ 真实返回类型是 void（iOS 18 运行时头文件实证）。之前写成 id：
@@ -125,6 +185,25 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
 // → autorelease 非对象 → SpringBoard 崩溃进安全模式。
 - (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations {
     SPVPNRefreshFromData(data);   // 先用「原始数据」判定 VPN 活跃
+
+    // 每个状态栏实例做一次视图树诊断（App 内染色、主屏不染 → 需要看两个实例各自的类树）
+    {
+        static NSMutableSet *scheduled = nil;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{ scheduled = [NSMutableSet set]; });
+        NSString *key = [NSString stringWithFormat:@"%p", self];
+        BOOL need = NO;
+        @synchronized (scheduled) {
+            if (![scheduled containsObject:key]) { [scheduled addObject:key]; need = YES; }
+        }
+        if (need) {
+            UIView *sbView = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                SPStatusBarTreeDiag(sbView);
+            });
+        }
+    }
 
     // 上色生效 → 把 vpnEntry 从状态栏数据里剥掉：条目不存在 → 指示器不创建、不占位、
     // 没有入场动画（也不会挤掉电池/信号/WiFi）。
