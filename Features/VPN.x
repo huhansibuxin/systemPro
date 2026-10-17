@@ -130,7 +130,8 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
         } @catch (NSException *e) {}
     }
 
-    %orig(workData);
+    // ⚠️ %orig 显式传参时必须给全部实参（data / styleAttributes / extraAnimations 三个）
+    %orig(workData, attributes, animations);
 }
 %end
 
