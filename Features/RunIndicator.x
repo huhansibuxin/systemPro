@@ -2,15 +2,14 @@
 // SystemX 原版语义（设置面板原文）：「当 APP 在前台运行时，APP 的名字会替换为一个指示点，
 // 代表当前 APP 正在运行中。」
 //
-// 实现（全部选择器均经 springboard-dump 核对，返回类型按最保守方式处理）：
+// 实现要点（选择器均经 springboard-dump 核对；返回类型一律按最保守方式处理）：
 //  1) SBHIconManager -iconViewDisplaysLabel:  运行中的 App 不显示名称（BOOL，标准 delegate 签名）；
-//  2) 名称隐藏用 labelView.hidden（UIView 公开 API），不碰 setLabelHidden:（参数类型不明，
-//     传错 BOOL/id 会崩）；
-//  3) 圆点：在原名称位置画 6pt #A7C6FF 圆点；
-//  4) 运行判定：FBProcessManager processesForBundleIdentifier:（含后台挂起也算运行）；
-//  5) 刷新：进程事件驱动（dispatch 到主队列延后刷新，不轮询）。
-//     ⚠️ 不再 hook SBIconView._updateLabel —— 其返回类型无法确认（id/void），
-//     void 声明会让调用方读到被清空的 x0 把垃圾当对象用 → 崩溃。
+//  2) 名称隐藏用 labelView.hidden（UIView 公开 API），不碰 setLabelHidden:（参数类型不明）；
+//  3) 圆点 8pt，颜色 = 电池充电绿（systemGreen #34C759，老板指定）；
+//  4) 位置：等图标布局完成（bounds 有效）才摆，并在 layoutSubviews 里只做「位置校正」，
+//     避免之前「先在图标上方出现一个点、再跳到下方」的抖动；
+//  5) 运行判定：FBProcessManager processesForBundleIdentifier:（含后台挂起）；
+//  6) 刷新：进程事件 dispatch 主队列（FB 的 call-out 是后台线程，直接动 UI 会 CA abort）。
 #import "../Common.h"
 #import "../PrivateHeaders.h"
 #import "../Prefs.h"
@@ -19,6 +18,38 @@
 static const void *kSPDotKey       = &kSPDotKey;      // 我们的圆点 view
 static const void *kSPHidLabelKey  = &kSPHidLabelKey; // 是否被我们隐藏了名称（恢复时用）
 static NSHashTable *gSPIconViews   = nil;             // 弱引用表：见过的图标 view
+
+static const CGFloat SP_DOT_SIZE = 8.0;               // 直径 8pt（上一版 6pt 偏小）
+
+// 老板指定：指示点颜色 = 电池充电图标的绿色
+static UIColor *SPRunDotColor(void) {
+    return [UIColor systemGreenColor];
+}
+
+static UIView *SPRunLabelView(SBIconView *iconView) {
+    @try {
+        id lv = ((id (*)(id, SEL))objc_msgSend)(iconView, @selector(labelView));
+        if ([lv isKindOfClass:[UIView class]]) return (UIView *)lv;
+    } @catch (NSException *e) {}
+    return nil;
+}
+
+// 摆圆点：图标还没布局（bounds 无效）就直接跳过，等 layoutSubviews 再摆 —— 这是消除
+// 「先在图标上方显示一个点、再跳到下方」抖动的关键。
+static void SPRunDotPosition(SBIconView *iconView, UIView *dot) {
+    CGRect b = iconView.bounds;
+    if (b.size.width < 10.0 || b.size.height < 10.0) return;
+
+    CGFloat cx = b.size.width / 2.0;
+    CGFloat cy = b.size.height - 14.0;      // 名称行所在高度
+    UIView *lv = SPRunLabelView(iconView);
+    if (lv && !CGRectIsEmpty(lv.frame)) {
+        cx = CGRectGetMidX(lv.frame);
+        cy = CGRectGetMidY(lv.frame);
+    }
+    dot.frame = CGRectMake(round(cx - SP_DOT_SIZE / 2.0), round(cy - SP_DOT_SIZE / 2.0),
+                           SP_DOT_SIZE, SP_DOT_SIZE);
+}
 
 // 取图标的 bundleID（仅普通 App 图标；文件夹/小组件返回 nil，天然排除）
 static NSString *SPRunIndicatorBundleID(SBIconView *iconView) {
@@ -62,37 +93,20 @@ static void SPRunIndicatorApply(SBIconView *iconView) {
     BOOL active = SPRunIndicatorActiveForView(iconView);
     UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
     BOOL weHid = [objc_getAssociatedObject(iconView, kSPHidLabelKey) boolValue];
-
-    UIView *labelView = nil;
-    @try {
-        id lv = ((id (*)(id, SEL))objc_msgSend)(iconView, @selector(labelView));
-        if ([lv isKindOfClass:[UIView class]]) labelView = (UIView *)lv;
-    } @catch (NSException *e) {}
+    UIView *labelView = SPRunLabelView(iconView);
 
     if (active) {
-        CGRect labelFrame = labelView ? labelView.frame : CGRectZero;
-
         if (!dot) {
             dot = [UIView new];
-            dot.layer.cornerRadius = 3.0;               // 6pt 圆点
-            dot.backgroundColor = SPTintColor();
+            dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;
+            dot.backgroundColor = SPRunDotColor();
             dot.userInteractionEnabled = NO;
             objc_setAssociatedObject(iconView, kSPDotKey, dot, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-        CGRect f = dot.frame;
-        f.size = CGSizeMake(6.0, 6.0);
-        if (!CGRectIsEmpty(labelFrame)) {
-            f.origin.x = CGRectGetMidX(labelFrame) - 3.0;
-            f.origin.y = CGRectGetMidY(labelFrame) - 3.0;
-        } else {
-            f.origin.x = iconView.bounds.size.width  / 2.0 - 3.0;
-            f.origin.y = iconView.bounds.size.height - 16.0;
-        }
-        dot.frame = f;
-        [iconView addSubview:dot];
+        SPRunDotPosition(iconView, dot);
+        if (dot.superview != iconView) [iconView addSubview:dot];
         [iconView bringSubviewToFront:dot];
 
-        // 隐藏名称：只改公开视图的 hidden（绝对安全）
         if (labelView) {
             labelView.hidden = YES;
             objc_setAssociatedObject(iconView, kSPHidLabelKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -114,8 +128,7 @@ static void SPRunIndicatorRefreshVisible(void) {
     for (SBIconView *v in [gSPIconViews allObjects]) {
         if (![v isKindOfClass:NSClassFromString(@"SBIconView")]) continue;
         if (!v.window) continue;                        // 只刷可见的
-        SPRunIndicatorApply(v);                         // 先自己更新圆点
-        // 再触发系统标签更新，让名称显隐跟随（_updateLabel 是否存在用 respondsToSelector 守卫）
+        SPRunIndicatorApply(v);
         if ([v respondsToSelector:@selector(_updateLabel)]) {
             @try { ((void (*)(id, SEL))objc_msgSend)(v, @selector(_updateLabel)); } @catch (NSException *e) {}
         }
@@ -125,7 +138,7 @@ static void SPRunIndicatorRefreshVisible(void) {
 static void SPRunIndicatorScheduleRefresh(void) {
     // ⚠️ FBProcessManager 的 call-out 队列是后台线程（崩溃日志实证：
     // queue=com.apple.frontboard.process.call-out → UIView setNeedsLayout → CA abort）。
-    // 所有 UI 操作必须切主队列；gSPRefreshScheduled 合并短时间内的多次进程事件。
+    // 所有 UI 操作必须切主队列；合并短时间内的多次进程事件。
     static BOOL scheduled = NO;
     if (scheduled) return;
     scheduled = YES;
@@ -138,7 +151,6 @@ static void SPRunIndicatorScheduleRefresh(void) {
 #pragma mark - 钩子
 
 // 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带在这里维护圆点
-// （每次标签更新都会走，天然覆盖「App 启动/退出后图标状态变化」）
 %hook SBHIconManager
 - (BOOL)iconViewDisplaysLabel:(id)iconView {
     if ([iconView isKindOfClass:NSClassFromString(@"SBIconView")]) {
@@ -154,6 +166,12 @@ static void SPRunIndicatorScheduleRefresh(void) {
 - (void)didMoveToWindow {
     %orig;
     if (SPBool(kRunIndicatorEnabled)) SPRunIndicatorApply(self);
+}
+// 只做位置校正（不发进程查询），保证圆点随图标布局稳定跟随、不跳动
+- (void)layoutSubviews {
+    %orig;
+    UIView *dot = objc_getAssociatedObject(self, kSPDotKey);
+    if (dot && dot.superview == self) SPRunDotPosition(self, dot);
 }
 %end
 

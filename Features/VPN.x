@@ -112,12 +112,46 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
 // ARC 会对「返回的对象指针」做 objc_autoreleaseReturnValue，而 void 方法返回的是垃圾值
 // → autorelease 非对象 → SpringBoard 崩溃进安全模式。
 - (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations {
-    SPVPNRefreshFromData(data);   // 先刷新判定，再让系统更新各条目
+    SPVPNRefreshFromData(data);   // 先用「原始数据」判定 VPN 活跃
+
+    // 上色生效 → 把 vpnEntry 从状态栏数据里剥掉：条目不存在 → 指示器不创建、不占位、
+    // 没有入场动画（也不会挤掉电池/信号/WiFi）。这是隐藏原版 VPN 图标最彻底的一层；
+    // 之前只让 imageName 返回 nil，item 仍在布局里（实测仍显示且占位）。
+    if (SPVPNColorGate() && data) {
+        @try {
+            SEL setSel = NSSelectorFromString(@"setVpnEntry:");
+            if ([data respondsToSelector:setSel]) {
+                ((void (*)(id, SEL, id))objc_msgSend)(data, setSel, nil);
+            }
+        } @catch (NSException *e) {}
+    }
+
     %orig;
 }
 %end
 
 #pragma mark - 钩子：上色
+
+// 信号条基类（iOS16 主桌面状态栏的 WiFi 信号条 = _UIStatusBarWifiSignalView，
+// 蜂窝信号条 = _UIStatusBarCellularSignalView，二者都继承 _UIStatusBarSignalView）。
+// ⚠️ 之前只挂了 STUIStatusBarWifiSignalView（老类名）→ 主桌面不染色，只有控制中心那颗染上了。
+// 颜色走 activeColor / inactiveColor 两个通道。
+%hook _UIStatusBarSignalView
+- (void)setActiveColor:(id)color {
+    %orig(SPVPNColorGate() ? SPTintColor() : color);
+}
+- (void)setInactiveColor:(id)color {
+    %orig(SPVPNColorGate() ? SPTintColor() : color);
+}
+- (void)applyStyleAttributes:(id)attributes {
+    %orig;
+    if (!SPVPNColorGate()) return;
+    @try {
+        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setActiveColor:), SPTintColor());
+        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setInactiveColor:), SPTintColor());
+    } @catch (NSException *e) {}
+}
+%end
 
 // WiFi 信号条（STUI 老样式）
 %hook STUIStatusBarWifiSignalView

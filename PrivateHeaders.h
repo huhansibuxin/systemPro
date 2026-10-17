@@ -12,22 +12,27 @@
 - (BOOL)dontLockAfterCrash;
 @end
 
-// _longPressToEditGestureRecognizer 是该类的 ivar（iOS16 dump: SBIconController +0x4b0），
-// 即"长按进编辑模式（jiggle）"的手势本体。
-@interface SBIconController : NSObject
-- (void)viewDidLoad;
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g;
+// 编辑态（jiggle + 删除按钮）入口拦截：editing 参数按 BOOL 声明（NO 在 BOOL/NSNumber* 两种
+// 真实签名下都是「假」，安全）；返回 void，x0 由 %orig 保留。
+@interface SBHIconManager : NSObject
+- (BOOL)iconViewDisplaysLabel:(id)iconView;
+- (void)setEditing:(BOOL)editing forIconLocation:(id)location;
+@end
+
+@interface SBFolderView : UIView
+- (void)setEditing:(BOOL)editing animated:(BOOL)animated;
+@end
+
+@interface SBFloatingDockView : UIView
+- (void)setEditing:(BOOL)editing;
 @end
 
 // ---------- APP 运行指示点 ----------
 @interface SBIconView : UIView
 - (void)didMoveToWindow;
+- (void)layoutSubviews;
 - (void)_updateLabel;      // 只用于「调用」，不 hook（返回类型无法静态确认）
 - (id)labelView;
-@end
-
-@interface SBHIconManager : NSObject
-- (BOOL)iconViewDisplaysLabel:(id)iconView;
 @end
 
 // ⚠️ noteProcessDidExit: / launchProcessWithContext: 在 FrontBoard 的后台 call-out 队列回调，
@@ -70,7 +75,15 @@
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier;
 @end
 
-// WiFi 信号条（STUI 老样式：颜色通道；_UI 新样式：fillColor）
+// 信号条基类（iOS16 主桌面：_UIStatusBarWifiSignalView / _UIStatusBarCellularSignalView
+// 都继承它，颜色走 activeColor / inactiveColor 两个通道）
+@interface _UIStatusBarSignalView : UIView
+- (void)setActiveColor:(id)color;
+- (void)setInactiveColor:(id)color;
+- (void)applyStyleAttributes:(id)attributes;
+@end
+
+// WiFi 信号条（STUI 老样式）
 @interface STUIStatusBarWifiSignalView : UIView
 - (void)setActiveColor:(id)color;
 - (void)setInactiveColor:(id)color;
