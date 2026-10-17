@@ -24,6 +24,10 @@ static BOOL gSPVPNNEVCache  = NO;   // NEVPNManager 兜底缓存
 static NSTimeInterval gSPVPNNEVCacheAt = 0;
 
 // 从 _UIStatusBarData 里读 vpnEntry.isEnabled（iOS16 dump 实证的 API）
+// ⚠️ 控制中心下拉等场景会送来「只含部分条目的 overlay 数据」，vpnEntry 缺失 ≠ VPN 断开。
+// 用「连续 3 次缺失才判定断开」过滤误判，避免染色忽有忽无（老板实测会闪）。
+static int gSPVPNMissCount = 0;
+
 static void SPVPNRefreshFromData(id data) {
     BOOL present = NO;
     if (data) {
@@ -41,7 +45,15 @@ static void SPVPNRefreshFromData(id data) {
         }
         gSPVPNDataSeen = YES;
     }
-    gSPVPNFromData = present;
+    if (present) {
+        gSPVPNFromData = YES;
+        gSPVPNMissCount = 0;
+    } else if (gSPVPNFromData) {
+        if (++gSPVPNMissCount >= 3) {   // 连续 3 次缺失才认为真断开
+            gSPVPNFromData = NO;
+            gSPVPNMissCount = 0;
+        }
+    }
 }
 
 // NEVPNManager 兜底（仅首帧数据到达前使用）
@@ -137,15 +149,38 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
 
 #pragma mark - 钩子：上色
 
-// 信号条：**只染 WiFi 图标**（_UIStatusBarWifiSignalView 的弧线）。
-// ⚠️ 上一版挂基类 _UIStatusBarSignalView → 蜂窝信号塔（bars）也被染了，老板明确不要
-//（SystemX 原版语义：给 Wi-Fi 图标和蜂窝网络类型文字上色，不改变蜂窝信号塔）。
-%hook _UIStatusBarWifiSignalView
+// 信号条：**只染 WiFi 图标**。两条通道都要挂：
+//  ① 基类 _UIStatusBarSignalView 的 setActiveColor:/setInactiveColor:（颜色设置入口）
+//  ② 基类 applyStyleAttributes: 之后补色 —— 主桌面状态栏的 WiFi 实例在样式刷新后会重设颜色，
+//     只靠 setter 会被冲掉（老板实测「主桌面不染色，只有控制中心那颗染」就是它）。
+// 用类名含 "Wifi" 过滤，蜂窝信号塔保持原色（SystemX 语义：不动信号塔）。
+static BOOL SPIsWifiSignalView(id view) {
+    NSString *cn = NSStringFromClass([view class]);
+    return [cn containsString:@"Wifi"];
+}
+
+%hook _UIStatusBarSignalView
 - (void)setActiveColor:(id)color {
-    %orig(SPVPNColorGate() ? SPTintColor() : color);
+    if (SPVPNColorGate() && SPIsWifiSignalView(self)) {
+        %orig(SPTintColor());
+        return;
+    }
+    %orig;
 }
 - (void)setInactiveColor:(id)color {
-    %orig(SPVPNColorGate() ? SPTintColor() : color);
+    if (SPVPNColorGate() && SPIsWifiSignalView(self)) {
+        %orig(SPTintColor());
+        return;
+    }
+    %orig;
+}
+- (void)applyStyleAttributes:(id)attributes {
+    %orig;
+    if (!SPVPNColorGate() || !SPIsWifiSignalView(self)) return;
+    @try {
+        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setActiveColor:), SPTintColor());
+        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setInactiveColor:), SPTintColor());
+    } @catch (NSException *e) {}
 }
 %end
 

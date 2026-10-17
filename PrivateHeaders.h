@@ -79,11 +79,17 @@
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier;
 @end
 
-// 信号条：只染 WiFi 图标的弧线（_UIStatusBarWifiSignalView）。
-// ⚠️ 不再挂基类 _UIStatusBarSignalView：那会把蜂窝信号塔一起染色（老板明确不要）。
-@interface _UIStatusBarWifiSignalView : UIView
+// 信号条基类（iOS16：_UIStatusBarWifiSignalView / _UIStatusBarCellularSignalView 都继承它）。
+// 只对类名含 Wifi 的实例染色（蜂窝信号塔保持原色）。applyStyleAttributes: 之后必须补色，
+// 否则主桌面状态栏的 WiFi 会被系统随后的样式刷新冲回原色。
+@interface _UIStatusBarSignalView : UIView
 - (void)setActiveColor:(id)color;
 - (void)setInactiveColor:(id)color;
+- (void)applyStyleAttributes:(id)attributes;
+@end
+
+// 只染 WiFi 图标的弧线（_UIStatusBarWifiSignalView）——保留声明便于将来精确挂点
+@interface _UIStatusBarWifiSignalView : _UIStatusBarSignalView
 @end
 
 // WiFi 信号条（STUI 老样式）

@@ -212,6 +212,15 @@ static void SPRunIndicatorScheduleRefresh(void) {
     });
 }
 
+// App 启动时进程注册有延迟：立即刷那一次常常还查不到进程 → 补一次 0.6s 后的一次性刷新。
+// 只是一次性 dispatch_after，不是轮询/定时器（老板要求：事件驱动、不常驻占 CPU）。
+static void SPRunIndicatorScheduleRefreshDelayed(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        SPRunIndicatorRefreshVisible();
+    });
+}
+
 #pragma mark - 钩子
 
 // 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带维护圆点。
@@ -263,6 +272,7 @@ static void SPRunIndicatorScheduleRefresh(void) {
 }
 - (void)launchProcessWithContext:(id)context {
     SPRunIndicatorScheduleRefresh();
+    SPRunIndicatorScheduleRefreshDelayed();   // 进程注册有延迟，补一次
     %orig;
 }
 %end
