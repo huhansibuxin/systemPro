@@ -115,41 +115,36 @@ static NSMutableAttributedString *SPVPNMaybeColorize(NSAttributedString *attr, N
     SPVPNRefreshFromData(data);   // 先用「原始数据」判定 VPN 活跃
 
     // 上色生效 → 把 vpnEntry 从状态栏数据里剥掉：条目不存在 → 指示器不创建、不占位、
-    // 没有入场动画（也不会挤掉电池/信号/WiFi）。这是隐藏原版 VPN 图标最彻底的一层；
-    // 之前只让 imageName 返回 nil，item 仍在布局里（实测仍显示且占位）。
+    // 没有入场动画（也不会挤掉电池/信号/WiFi）。
+    // ⚠️ 必须剥**副本**再交给系统：直接改原对象的话，下一轮更新拿到的还是这份被剥掉的数据，
+    // 判定退化成「VPN 未连接」→ 染/不染来回闪（老板实测「偶尔跳白、偶尔跳淡蓝」就是这个）。
+    id workData = data;
     if (SPVPNColorGate() && data) {
         @try {
+            id copy = [data copy];
             SEL setSel = NSSelectorFromString(@"setVpnEntry:");
-            if ([data respondsToSelector:setSel]) {
-                ((void (*)(id, SEL, id))objc_msgSend)(data, setSel, nil);
+            if (copy && [copy respondsToSelector:setSel]) {
+                ((void (*)(id, SEL, id))objc_msgSend)(copy, setSel, nil);
+                workData = copy;
             }
         } @catch (NSException *e) {}
     }
 
-    %orig;
+    %orig(workData);
 }
 %end
 
 #pragma mark - 钩子：上色
 
-// 信号条基类（iOS16 主桌面状态栏的 WiFi 信号条 = _UIStatusBarWifiSignalView，
-// 蜂窝信号条 = _UIStatusBarCellularSignalView，二者都继承 _UIStatusBarSignalView）。
-// ⚠️ 之前只挂了 STUIStatusBarWifiSignalView（老类名）→ 主桌面不染色，只有控制中心那颗染上了。
-// 颜色走 activeColor / inactiveColor 两个通道。
-%hook _UIStatusBarSignalView
+// 信号条：**只染 WiFi 图标**（_UIStatusBarWifiSignalView 的弧线）。
+// ⚠️ 上一版挂基类 _UIStatusBarSignalView → 蜂窝信号塔（bars）也被染了，老板明确不要
+//（SystemX 原版语义：给 Wi-Fi 图标和蜂窝网络类型文字上色，不改变蜂窝信号塔）。
+%hook _UIStatusBarWifiSignalView
 - (void)setActiveColor:(id)color {
     %orig(SPVPNColorGate() ? SPTintColor() : color);
 }
 - (void)setInactiveColor:(id)color {
     %orig(SPVPNColorGate() ? SPTintColor() : color);
-}
-- (void)applyStyleAttributes:(id)attributes {
-    %orig;
-    if (!SPVPNColorGate()) return;
-    @try {
-        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setActiveColor:), SPTintColor());
-        ((void (*)(id, SEL, id))objc_msgSend)(self, @selector(setInactiveColor:), SPTintColor());
-    } @catch (NSException *e) {}
 }
 %end
 

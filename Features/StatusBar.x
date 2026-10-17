@@ -20,10 +20,21 @@ static inline BOOL SPFakeBatteryValue(int *out) {
 }
 %end
 
+// ⚠️ BCBatteryDevice 是所有电池设备的通用模型（iPhone / Apple Watch / AirPods / Pencil…），
+// 逐个实例都会走这个 getter。必须只改「内置电池」(isInternal=YES)，否则手表/耳机电量全被改掉。
 %hook BCBatteryDevice
 - (long)percentCharge {
     int fake;
-    if (SPFakeBatteryValue(&fake)) return fake;
+    if (SPFakeBatteryValue(&fake)) {
+        BOOL isInternal = YES;   // 取不到 isInternal 时保守按内置处理
+        @try {
+            SEL sel = @selector(isInternal);
+            if ([self respondsToSelector:sel]) {
+                isInternal = ((BOOL (*)(id, SEL))objc_msgSend)(self, sel);
+            }
+        } @catch (NSException *e) {}
+        if (isInternal) return fake;
+    }
     return %orig;
 }
 %end

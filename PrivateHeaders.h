@@ -29,7 +29,7 @@
 
 // ---------- APP 运行指示点 ----------
 @interface SBIconView : UIView
-- (void)didMoveToWindow;
+
 - (void)layoutSubviews;
 - (void)_updateLabel;      // 只用于「调用」，不 hook（返回类型无法静态确认）
 - (id)labelView;
@@ -75,12 +75,11 @@
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier;
 @end
 
-// 信号条基类（iOS16 主桌面：_UIStatusBarWifiSignalView / _UIStatusBarCellularSignalView
-// 都继承它，颜色走 activeColor / inactiveColor 两个通道）
-@interface _UIStatusBarSignalView : UIView
+// 信号条：只染 WiFi 图标的弧线（_UIStatusBarWifiSignalView）。
+// ⚠️ 不再挂基类 _UIStatusBarSignalView：那会把蜂窝信号塔一起染色（老板明确不要）。
+@interface _UIStatusBarWifiSignalView : UIView
 - (void)setActiveColor:(id)color;
 - (void)setInactiveColor:(id)color;
-- (void)applyStyleAttributes:(id)attributes;
 @end
 
 // WiFi 信号条（STUI 老样式）
