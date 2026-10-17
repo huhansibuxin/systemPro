@@ -69,6 +69,7 @@
 // ⚠️ 返回类型是 void（iOS 18 运行时头文件 + 崩溃日志双实证），写成 id 会被 ARC autorelease 垃圾值 → 崩。
 @interface _UIStatusBar : UIView
 - (void)_updateDisplayedItemsWithData:(id)data styleAttributes:(id)attributes extraAnimations:(id)animations;
+- (BOOL)areAnimationsEnabled;
 @end
 
 // VPN 指示器本体（iOS16 dump: _UIStatusBarIndicatorVPNItem : _UIStatusBarIndicatorItem）
@@ -76,6 +77,7 @@
 @interface _UIStatusBarIndicatorVPNItem : NSObject
 - (id)imageNameForUpdate:(id)update;
 - (id)systemImageNameForUpdate:(id)update;
+- (id)prepareAnimation:(id)animation forDisplayItem:(id)displayItem;
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier;
 @end
 

@@ -258,10 +258,16 @@ static BOOL SPIsWifiSignalView(id view) {
 }
 %end
 
-#pragma mark - 钩子：上色生效时隐藏原版带方框的 VPN 图标
-// 方式：让 VPN 指示器取不到图（imageName 返回 nil）——返回 nil 对 id 返回类型绝对安全，
-// 不走 BOOL 返回的门控方法（canEnableDisplayItem:fromData: 真实返回类型无法静态确认，
-// 写错 BOOL/id 会在 ABI 上互撞：BOOL→id 会让调用方把 0x1 当对象指针用）。
+#pragma mark - 钩子：VPN 图标不飞入
+// 分三层拦，因为实测只挂 additionAnimation 不够（状态栏的入场动画还有别的来源）：
+//  ① 状态栏级动画总开关：VPN 活跃 + 功能开启 → 直接关闭本次更新的动画（最有效）
+//  ② item 级 prepareAnimation / ③ additionAnimation 都返回 nil（细粒度兜底）
+%hook _UIStatusBar
+- (BOOL)areAnimationsEnabled {
+    if (SPIsSpringBoard && SPBool(kHideVPNFlyInAnimation) && SPVPNActive()) return NO;
+    return %orig;
+}
+%end
 
 %hook _UIStatusBarIndicatorVPNItem
 - (id)imageNameForUpdate:(id)update {
@@ -272,7 +278,10 @@ static BOOL SPIsWifiSignalView(id view) {
     if (SPVPNColorGate()) return nil;
     return %orig;
 }
-// VPN 图标不飞入：入场动画对象返回 nil = 瞬间出现
+- (id)prepareAnimation:(id)animation forDisplayItem:(id)displayItem {
+    if (SPIsSpringBoard && SPBool(kHideVPNFlyInAnimation)) return nil;
+    return %orig;
+}
 - (id)additionAnimationForDisplayItemWithIdentifier:(id)identifier {
     if (SPIsSpringBoard && SPBool(kHideVPNFlyInAnimation)) return nil;
     return %orig;
