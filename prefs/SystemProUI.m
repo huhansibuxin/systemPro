@@ -649,108 +649,27 @@ static void SPPrefsWrite(NSString *key, id value) {
 
 - (void)buildModel {
     UIColor *indigo = [UIColor colorWithRed:0.36 green:0.34 blue:0.92 alpha:1];
-    UIColor *orange = [UIColor systemOrangeColor];
     UIColor *blue   = [UIColor systemBlueColor];
     UIColor *green  = [UIColor systemGreenColor];
-    UIColor *pink   = [UIColor systemPinkColor];
     UIColor *teal   = [UIColor systemTealColor];
     UIColor *purple = [UIColor systemPurpleColor];
-    UIColor *red    = [UIColor systemRedColor];
 
-    SPSection *sb = [self section:@"状态栏"
-        footer:@"日期显示在状态栏时间下方。"
+    SPSection *main = [self section:@""
+        footer:@"全部功能只注入 SpringBoard，改动即时生效；长按禁用 / 运行指示点建议注销一次做全量刷新。"
         rows:@[
-            [self sw:kStatusBarDateTime title:@"显示日期时间" sub:@"时间下方一行日期，可自定义格式与字号" icon:@"calendar.badge.clock" tint:orange respring:NO],
-            [self tx:kSBCDateTimeTimeFormat title:@"时间格式" icon:@"clock" def:@"HH:mm" numeric:NO],
-            [self tx:kSBCDateTimeDateFormat title:@"日期格式" icon:@"calendar" def:@"E MM/dd" numeric:NO],
-            [self tx:kSBCDateTimeTimeFontSize title:@"时间字号" icon:@"textformat.size" def:@"15" numeric:YES],
-            [self tx:kSBCDateTimeDateFontSize title:@"日期字号" icon:@"textformat.size" def:@"10" numeric:YES],
-            [self tx:kSBCDateTimeOffsetY title:@"整体上下偏移" icon:@"arrow.up.and.down" def:@"0" numeric:YES],
-            [self sw:kSBCDateTimeEnglishDate title:@"英文日期" sub:nil icon:@"character" tint:teal respring:NO],
-            [self sw:kSilentStatusBarIcon title:@"静音小图标" sub:@"仅当手机处于静音模式时显示" icon:@"bell.slash.fill" tint:purple respring:NO],
-            [self tx:kSilentStatusBarIconSymbol title:@"图标符号名" icon:@"square.grid.3x1.folder.badge.plus" def:@"bell.slash.fill" numeric:NO],
-            [self sw:kForce5GAStatusBar title:@"蜂窝显示 5GA" sub:@"仅改状态栏文字，不改网络制式" icon:@"antenna.radiowaves.left.and.right" tint:green respring:NO],
+            [self sw:kNoLockAfterRespring title:@"注销不锁屏" sub:@"注销/重启后直接进入桌面，不回锁屏" icon:@"lock.open.fill" tint:green respring:NO],
+            [self sw:kDisableHomeScreenLongPress title:@"长按桌面禁用" sub:@"长按桌面/图标不再进入编辑模式：不抖动、无任何动作（3D Touch 菜单保留）" icon:@"hand.point.up.left.fill" tint:indigo respring:NO],
+            [self sw:kColorizeVPNStatusBar title:@"VPN 上色" sub:@"VPN 连接时 VPN/WiFi/蜂窝变为 #A7C6FF，并隐藏原版 VPN 图标" icon:@"shield.lefthalf.filled" tint:blue respring:NO],
+            [self sw:kHideVPNFlyInAnimation title:@"VPN 图标不飞入" sub:@"VPN 图标瞬间出现，不播滑入动画" icon:@"bolt.slash.fill" tint:teal respring:NO],
             [self tx:kFakeBatteryPercent title:@"伪装电量（1-100，0=关）" icon:@"battery.75" def:@"0" numeric:YES],
-            [self sw:kVPNTint title:@"VPN 上色（默认绿）" sub:@"VPN 开启时：VPN / WiFi / 蜂窝一起变绿" icon:@"shield.lefthalf.filled" tint:green respring:NO],
-        ]];
-
-    SPSection *dt = [self section:@"桌面与 Dock"
-        footer:@"Dock 布局类修改建议注销后生效。手势在桌面空白区域触发。"
-        rows:@[
-            [self sw:kFiveIconDock title:@"Dock 五图标" sub:@"首次开启请注销" icon:@"dock.rectangle" tint:blue respring:YES],
-            [self sw:kTransparentDock title:@"透明 Dock 背景" sub:nil icon:@"square.on.square.dashed" tint:blue respring:NO],
-            [self sw:kDoubleTapToLock title:@"双击桌面锁屏" sub:nil icon:@"hand.tap.fill" tint:indigo respring:NO],
-            [self sw:kLongPressToLock title:@"长按桌面锁屏" sub:nil icon:@"hand.point.up.left.fill" tint:indigo respring:NO],
-            [self sw:kHideHomeBar title:@"隐藏 Home Bar" sub:nil icon:@"rectangle.bottomhalf.filled" tint:purple respring:NO],
-            [self sw:kHideHomePageDots title:@"隐藏翻页点" sub:nil icon:@"ellipsis" tint:teal respring:NO],
-            [self sw:kHideHomeIconLabels title:@"隐藏图标名称" sub:nil icon:@"textformat" tint:teal respring:NO],
-            [self sw:kHideWidgetLabels title:@"隐藏小组件名称" sub:nil icon:@"square.grid.2x2" tint:teal respring:NO],
-            [self sw:kHideHomeIconLabelShadow title:@"隐藏名称阴影" sub:nil icon:@"shadow" tint:teal respring:NO],
-        ]];
-
-    SPSection *fd = [self section:@"文件夹"
-        footer:@"文件夹布局属于注册期配置，首次开关请注销。"
-        rows:@[
-            [self sw:kFolder4x4 title:@"文件夹 4×4 布局" sub:@"首次开启请注销" icon:@"folder.fill" tint:orange respring:YES],
-        ]];
-
-    SPSection *dis = [self section:@"禁用与隐藏"
-        footer:@"分隔线按 App 分别生效（设置/电话/信息）。"
-        rows:@[
-            [self sw:kDisableTodayView title:@"禁用负一屏" sub:nil icon:@"rectangle.split.3x1" tint:red respring:NO],
-            [self sw:kDisableAppLibrary title:@"禁用 App 资源库" sub:nil icon:@"square.grid.2x2.fill" tint:red respring:NO],
-            [self sw:kDisableHomePullDownSearch title:@"禁用下拉搜索" sub:nil icon:@"magnifyingglass" tint:red respring:NO],
-            [self sw:kDisableSeparators title:@"禁用设置分隔线" sub:nil icon:@"minus" tint:pink respring:NO],
-            [self sw:kDisablePhoneSeparators title:@"禁用电话分隔线" sub:nil icon:@"minus" tint:pink respring:NO],
-            [self sw:kDisableMessagesSeparators title:@"禁用信息分隔线" sub:nil icon:@"minus" tint:pink respring:NO],
-            [self sw:kNotificationNoWake title:@"通知不亮屏" sub:nil icon:@"bell.slash" tint:purple respring:NO],
-            [self sw:kChargingWakeDisabled title:@"充电不亮屏" sub:nil icon:@"bolt.slash.fill" tint:purple respring:NO],
-            [self sw:kNoLockAfterRespring title:@"注销不锁屏" sub:@"注销/重启后直接进入桌面" icon:@"lock.open.fill" tint:green respring:NO],
-        ]];
-
-    SPSection *ph = [self section:@"相册"
-        footer:@"仅作用于照片 App。"
-        rows:@[
-            [self sw:kSkipDeleteConfirmation title:@"跳过删除确认" sub:nil icon:@"trash.slash.fill" tint:red respring:NO],
-            [self sw:kHideZoomLevelControl title:@"隐藏年月日控件" sub:nil icon:@"calendar.day.timeline.left" tint:teal respring:NO],
-            [self sw:kAllowSelectAll title:@"允许全选" sub:nil icon:@"checkmark.circle.fill" tint:green respring:NO],
-            [self sw:kMarkAlbumNotUserCreated title:@"隐藏「我的相簿」分组" sub:nil icon:@"rectangle.stack.badge.minus" tint:orange respring:NO],
-            [self sw:kPhotosDefaultSound title:@"视频默认放音" sub:@"播放视频不再默认静音（手动静音不受影响）" icon:@"speaker.wave.2.fill" tint:purple respring:NO],
-        ]];
-
-    SPSection *sys = [self section:@"系统"
-        footer:@"「彻底关闭」只影响控制中心里关 Wi-Fi / 蓝牙的力度：真正断电，而非「关到明天」。"
-        rows:@[
-            [self sw:kDisconnectWiFiBT title:@"彻底关闭 WiFi 和蓝牙" sub:@"控制中心关开关时直接断电射频" icon:@"wifi.slash" tint:blue respring:NO],
-            [self sw:kAutoDismissFaceID title:@"面容解锁进入主屏幕" sub:@"Face ID 通过后自动收起锁屏" icon:@"faceid" tint:green respring:NO],
+            [self sw:kRunIndicatorEnabled title:@"APP 运行指示点" sub:@"运行中的 App，图标名称替换为 #A7C6FF 圆点" icon:@"circlebadge.fill" tint:purple respring:NO],
         ]];
 
     SPRow *au = [SPRow kind:SPRowKindInfo key:nil title:@"作者" subtitle:nil icon:@"person" tint:[UIColor systemGrayColor]];
     au.defValue = @"D";
     SPSection *about = [self section:@"关于" footer:nil rows:@[au]];
 
-    NSArray *all = @[sb, dt, fd, dis, ph, sys];
-    if (self.pageIndex >= 0) {
-        // 子页：只装对应的一个分组；导航栏已是页名，去掉重复的分组标题
-        NSInteger idx = MIN(MAX(self.pageIndex, 0), (NSInteger)all.count - 1);
-        SPSection *one = all[idx];
-        SPSection *copy = [SPSection new];
-        copy.title = @"";
-        copy.footer = one.footer;
-        copy.rows = one.rows;
-        self.model = [NSMutableArray arrayWithObject:copy];
-        return;
-    }
-
-    // 首页：分页入口 + 关于（不显示计数、不显示副标题、不显示页脚 —— 按操作方定稿）
-    SPRow *r0 = [self lk:@"状态栏" sub:nil icon:@"antenna.radiowaves.left.and.right" idx:0];
-    SPRow *r1 = [self lk:@"桌面与 Dock" sub:nil icon:@"apps.iphone" idx:1];
-    SPRow *r2 = [self lk:@"文件夹" sub:nil icon:@"folder.fill" idx:2];
-    SPRow *r3 = [self lk:@"禁用与隐藏" sub:nil icon:@"eye.slash.fill" idx:3];
-    SPRow *r4 = [self lk:@"相册" sub:nil icon:@"photo" idx:4];
-    SPRow *r5 = [self lk:@"系统" sub:nil icon:@"gearshape.2.fill" idx:5];
-    SPSection *pages = [self section:@"" footer:nil rows:@[r0, r1, r2, r3, r4, r5]];
-    self.model = [@[pages, about] mutableCopy];
+    self.model = [@[main, about] mutableCopy];
 }
 
 #pragma mark - 表格数据源 / 交互（分节与行序由框架 specifier 模型负责）
@@ -833,14 +752,9 @@ static void SPPrefsWrite(NSString *key, id value) {
 - (void)updateHeroCount {
     if (!self.hero) return; // 只在首页有 Hero 卡
     NSArray *keys = @[
-        kStatusBarDateTime, kSilentStatusBarIcon, kForce5GAStatusBar,
-        kFiveIconDock, kTransparentDock, kDoubleTapToLock, kLongPressToLock,
-        kHideHomeBar, kHideHomePageDots, kHideHomeIconLabels, kHideWidgetLabels, kHideHomeIconLabelShadow,
-        kFolder4x4,
-        kDisableTodayView, kDisableAppLibrary, kDisableHomePullDownSearch,
-        kDisableSeparators, kDisablePhoneSeparators, kDisableMessagesSeparators,
-        kNotificationNoWake, kChargingWakeDisabled, kNoLockAfterRespring,
-        kSkipDeleteConfirmation, kHideZoomLevelControl, kAllowSelectAll, kMarkAlbumNotUserCreated,
+        kNoLockAfterRespring, kDisableHomeScreenLongPress,
+        kColorizeVPNStatusBar, kHideVPNFlyInAnimation,
+        kRunIndicatorEnabled,
     ];
     NSInteger on = 0;
     for (NSString *k in keys) {

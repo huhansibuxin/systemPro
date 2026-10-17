@@ -1,86 +1,59 @@
-// Features_Disable.x — 禁用类（负一屏/资源库/下拉搜索/分隔线/通知不亮屏/充电不唤醒/注销不锁屏）
-// Hook 点对标 SystemX：
-//   SBSearchGesture revealAnimated: / searchScrollViewShouldRecognize:      (0x156f4/0x15654)
-//   SBHIconManager presentTodayOverlay / presentTodayOverlayForIconDragManager: (0x155d0/0x15560)
-//   SBIconController iconManager:rootFolderController:did(End)Overscroll...  (0x1527c/0x151d8)
-//   _UI(UITableViewCell)SeparatorView layoutSubviews                        (0x11858)
-//   SBNCScreenController canTurnOnScreenForNotificationRequest:              (0x14e60)
-//   SBBacklightController turnOnScreenFullyWithBacklightSource:              (0x14e14)
-//   SBLockScreenManager _setUILocked: / _reallySetUILocked:                  (0x1d31c/0x1d348)
+// Features_Disable.x — 注销不锁屏 + 长按桌面禁用
+// 对标 SystemX 两个键：
+//   noLockAfterRespring        SBBootDefaults dontLockAfterCrash（注销/崩溃后不自动上锁）
+//   disableHomeScreenLongPress 干掉 SBIconController 的 _longPressToEditGestureRecognizer
+//                             （长按进编辑模式=jiggle 的手势本体），长按桌面/图标不再有任何动作；
+//                             3D Touch 长按菜单是另一条手势链，不受影响（与 SystemX 同行为）。
 #import "../Common.h"
 #import "../PrivateHeaders.h"
 #import "../Prefs.h"
+#import <objc/runtime.h>
 
-%hook SBSearchGesture
-- (void)revealAnimated:(BOOL)animated {
-    if (SPBool(kDisableTodayView)) return;               // 禁用负一屏
-    %orig(animated);
-}
-- (BOOL)searchScrollViewShouldRecognize:(id)scrollView {
-    if (SPBool(kDisableHomePullDownSearch)) return NO;   // 禁用桌面下拉搜索
-    return %orig;
-}
-%end
+// 编辑态长按手势的标记 key（viewDidLoad 里给手势打标，delegate 钩子凭标拦截）
+static const void *kSPEditGestureKey = &kSPEditGestureKey;
 
-%hook SBHIconManager
-- (void)presentTodayOverlay {
-    if (SPBool(kDisableTodayView)) return;
-    %orig;
+static BOOL SPGestureIsEditLongPress(UIGestureRecognizer *g) {
+    if (!g) return NO;
+    return objc_getAssociatedObject(g, kSPEditGestureKey) != nil;
 }
-- (void)presentTodayOverlayForIconDragManager:(id)manager {
-    if (SPBool(kDisableTodayView)) return;
-    %orig(manager);
+
+// 从 SBIconController 取出编辑态长按手势（ivar _longPressToEditGestureRecognizer，iOS16 dump +0x4b0）
+static UILongPressGestureRecognizer *SPEditLongPressGesture(SBIconController *controller) {
+    UILongPressGestureRecognizer *g = nil;
+    @try {
+        g = [controller valueForKey:@"_longPressToEditGestureRecognizer"];
+    } @catch (NSException *e) {
+        return nil;   // 个别系统版本没有该 ivar，静默放弃
+    }
+    return [g isKindOfClass:[UILongPressGestureRecognizer class]] ? g : nil;
 }
-%end
 
 %hook SBIconController
-- (void)iconManager:(id)manager rootFolderController:(id)controller
-    didEndOverscrollOnLastPageWithVelocity:(CGPoint)velocity translation:(CGPoint)translation {
-    if (SPBool(kDisableAppLibrary)) return;            // 不进入资源库
-    %orig(manager, controller, velocity, translation);
-}
-- (void)iconManager:(id)manager rootFolderController:(id)controller
-    didOverscrollOnLastPageByAmount:(double)amount {
-    if (SPBool(kDisableAppLibrary)) return;
-    %orig(manager, controller, amount);
-}
-%end
-
-// 分隔线：设置 / 电话 / 信息（按进程分别开关）
-%hook _UIUITableViewCellSeparatorView
-- (void)layoutSubviews {
+- (void)viewDidLoad {
     %orig;
-    if (SPSeparatorsDisabled()) self.hidden = YES;
+    if (!SPIsSpringBoard || !SPBool(kDisableHomeScreenLongPress)) return;
+    UILongPressGestureRecognizer *g = SPEditLongPressGesture(self);
+    if (!g) return;
+    g.enabled = NO;                                   // 直接废掉手势
+    objc_setAssociatedObject(g, kSPEditGestureKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
-%end
 
-%hook _UITableViewCellSeparatorView
-- (void)layoutSubviews {
-    %orig;
-    if (SPSeparatorsDisabled()) self.hidden = YES;
-}
-%end
-
-// 通知不亮屏：来源是通知请求时直接拒绝点亮
-%hook SBNCScreenController
-- (BOOL)canTurnOnScreenForNotificationRequest:(id)request {
-    if (SPBool(kNotificationNoWake)) return NO;
+// 兜底：万一系统后续又重新启用手势，delegate 层凭标记拦死
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (SPIsSpringBoard && SPBool(kDisableHomeScreenLongPress) && SPGestureIsEditLongPress(g)) {
+        return NO;
+    }
     return %orig;
 }
 %end
 
-// 充电不点亮（对齐 SystemX 的三个拦截点：电源状态唤醒入口 + 背光唤醒兜底）
-%hook SBUIController
-- (void)possiblyWakeForPowerStatusChangeWithUnlockSource:(long)source {
-    if (SPBool(kChargingWakeDisabled)) return; // 电源事件不再触发唤醒
-    %orig(source);
-}
-%end
-
-%hook SBBacklightController
-- (void)turnOnScreenFullyWithBacklightSource:(long)source {
-    if (SPBool(kChargingWakeDisabled)) return; // 点亮请求直接吞掉（充电本身不受影响）
-    %orig(source);
+// 双保险：编辑手势的 delegate 若是 SBIconView 而非 SBIconController，这里也拦
+%hook SBIconView
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (SPIsSpringBoard && SPBool(kDisableHomeScreenLongPress) && SPGestureIsEditLongPress(g)) {
+        return NO;
+    }
+    return %orig;
 }
 %end
 

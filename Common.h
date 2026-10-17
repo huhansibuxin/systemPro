@@ -1,6 +1,8 @@
-// Common.h — systemPro 公共定义
-// 架构对标 SystemX（思路参考，代码自研）：全局开关（读 com.sytem.pro plist）
-// + 进程判定 + Darwin 通知热重载 + 少量 ObjC 运行时工具。
+// Common.h — systemPro 公共定义（精简版：仅 6 项功能，全部只注入 SpringBoard）
+// 功能面移植自 SystemX（com.wkk.systembox）逆向成果 + duck1001/systemPro 自研框架：
+//   noLockAfterRespring / disableHomeScreenLongPress / colorizeVPNStatusBar /
+//   hideVPNFlyInAnimation / fakeBatteryPercent / runIndicatorEnabled
+// 键名与 SystemX 对齐（便于配置迁移），domain 仍为 com.sytem.pro。
 #ifndef SP_COMMON_H
 #define SP_COMMON_H
 
@@ -97,16 +99,9 @@ __attribute__((unused)) static BOOL SPProcessIs(NSString *name) {
     return bid.length > 0 && [bid isEqualToString:name];
 }
 extern BOOL SPIsSpringBoard;
-extern BOOL SPIsPreferences;
-extern BOOL SPIsPhotos;
-extern BOOL SPIsPhone;
-extern BOOL SPIsMessages;
 
 // 自检门禁（SP_ENABLE_INTEGRITY_CHECK=1 且校验失败时整体禁用）
 extern BOOL SPGatePassed;
-
-// 各功能模块的一次性初始化（由主构造函数调用）
-void SPStatusBarFeaturesInit(void);
 
 // ---------- 开关读取（惰性加载 + Darwin 热重载 见 Prefs.m） ----------
 BOOL  SPBool(NSString *key);
@@ -114,69 +109,18 @@ long  SPInt(NSString *key);
 double SPFloat(NSString *key);
 NSString *SPString(NSString *key, NSString *def);
 
-// ---------- 工具 ----------
-// 读取对象上的标量 ivar（对齐 SystemX 在 numberOfPortraitColumns 里的做法：
-// class_getInstanceVariable + ivar_getOffset 直接取内存值）
-long SPReadIvarLong(id obj, const char *name);
-// 读取对象指针型 ivar（如 SBHomeGrabberView 的 _pillView）
-id SPReadIvarObject(id obj, const char *name);
-// 锁屏（多路降级，找不到 API 就静默放弃）
-void SPLockDevice(void);
+// ---------- 共享强调色 ----------
+// VPN 上色 / APP 运行指示点共用（与 SystemX 同思路：一套色两处用）。
+// 默认值取自老板设备 SystemX 配置文件实读：RGB(167,198,255) = #A7C6FF。
+UIColor *SPTintColor(void);
 
-// ---------- 开关键名（与 prefs 面板一致） ----------
+// ---------- 开关键名（与 SystemX 对齐；设置面板同一套） ----------
 // General
-#define kSilentStatusBarIcon        @"silentStatusBarIcon"
-#define kSilentStatusBarIconSymbol  @"silentStatusBarIconSymbol"
-#define kForce5GAStatusBar          @"force5GAStatusBar"
-#define kFakeBatteryPercent         @"fakeBatteryPercent"
-#define kNoLockAfterRespring        @"noLockAfterRespring"
-#define kNotificationNoWake         @"notificationNoWakeEnabled"
-#define kChargingWakeDisabled       @"disableLockScreenChargingWake"
-// StatusBar/DateTime
-#define kStatusBarDateTime          @"statusBarDateTimeEnabled"
-#define kSBCDateTimeTimeFormat      @"statusBarDateTimeTimeFormat"
-#define kSBCDateTimeDateFormat      @"statusBarDateTimeDateFormat"
-#define kSBCDateTimeTimeFontSize    @"statusBarDateTimeTimeFontSize"
-#define kSBCDateTimeDateFontSize    @"statusBarDateTimeDateFontSize"
-#define kSBCDateTimeOffsetY         @"statusBarDateTimeOffsetY"
-#define kSBCDateTimeEnglishDate     @"statusBarDateTimeEnglishDate"
-// Desktop
-#define kFiveIconDock               @"fiveIconDock"
-#define kTransparentDock            @"transparentDock"
-#define kHideHomeBar                @"hideHomeBar"
-#define kHideHomePageDots           @"hideHomePageDots"
-#define kHideWidgetLabels           @"hideWidgetLabels"
-#define kHideHomeIconLabels         @"hideHomeIconLabels"
-#define kHideHomeIconLabelShadow    @"hideHomeIconLabelShadow"
-#define kDoubleTapToLock            @"doubleTapToLock"
-#define kLongPressToLock            @"longPressToLock"
-// Folder
-#define kFolder4x4                  @"enableFolder4x4"
-#define kFolderPreviewIconScale     @"folderPreviewIconScale"
-// Disable
-#define kDisableTodayView           @"disableTodayView"
-#define kDisableAppLibrary          @"disableAppLibrary"
-#define kDisableHomePullDownSearch  @"disableHomePullDownSearch"
-#define kDisableSeparators          @"disableSeparators"
-#define kDisablePhoneSeparators     @"disablePhoneSeparators"
-#define kDisableMessagesSeparators  @"disableMessagesSeparators"
-// Photos
-#define kSkipDeleteConfirmation     @"skipDeleteConfirmation"
-#define kHideZoomLevelControl       @"hideZoomLevelControl"
-#define kAllowSelectAll             @"allowSelectAll"
-#define kMarkAlbumNotUserCreated    @"markAlbumsAsNotUserCreated"
-#define kPhotosDefaultSound         @"photosDefaultSound"       // 视频默认放音
-// VPN / 网络 / 锁屏（0.0.3 功能轮）
-#define kVPNTint                    @"colorizeVPNStatusBar"      // VPN 上色（默认绿，联动 WiFi/蜂窝）
-#define kDisconnectWiFiBT           @"disconnectWiFiBT"         // 彻底关闭 WiFi 和蓝牙
-#define kAutoDismissFaceID          @"autoDismissFaceID"        // 面容解锁进入主屏幕
-
-// 设置面板里与系统分段的通用：分隔线在哪个进程被禁用
-static inline BOOL SPSeparatorsDisabled(void) {
-    if (SPIsPreferences && SPBool(kDisableSeparators))      return YES;
-    if (SPIsPhone       && SPBool(kDisablePhoneSeparators)) return YES;
-    if (SPIsMessages    && SPBool(kDisableMessagesSeparators)) return YES;
-    return NO;
-}
+#define kNoLockAfterRespring         @"noLockAfterRespring"          // 注销/重启后直接进桌面
+#define kDisableHomeScreenLongPress  @"disableHomeScreenLongPress"   // 长按桌面啥都不干 + 图标不抖动
+#define kColorizeVPNStatusBar        @"colorizeVPNStatusBar"         // VPN 上色（#A7C6FF，联动 WiFi/蜂窝，隐藏原 VPN 图标）
+#define kHideVPNFlyInAnimation       @"hideVPNFlyInAnimation"        // VPN 图标不飞入、瞬间出现
+#define kFakeBatteryPercent          @"fakeBatteryPercent"           // 伪装电量 1-100，0=关
+#define kRunIndicatorEnabled         @"runIndicatorEnabled"          // APP 运行指示点（名称替换为圆点）
 
 #endif
