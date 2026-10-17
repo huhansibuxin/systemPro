@@ -32,7 +32,10 @@ void SPDiagReset(void) {
 
 void SPDiagLog(NSString *line) {
     if (!line.length) return;
-    @synchronized ([SPDiagLog class]) {
+    static NSObject *lock = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ lock = [NSObject new]; });
+    @synchronized (lock) {
         NSString *entry = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], line];
         NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:SPDiagPath()];
         if (!fh) {
