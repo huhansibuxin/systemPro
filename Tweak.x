@@ -20,7 +20,8 @@ UIColor *SPTintColor(void) {
 }
 
 // ---------- 轻量诊断日志 ----------
-// 每次 SpringBoard 启动清空重建（只保留当前这轮现场）；追加写，调用点都很稀疏。
+// SpringBoard 以 mobile 身份可写 /var/mobile/Library/Logs（1.0.0-5 实证已生成）。
+// ⚠️ SSH 读取时要加真实根前缀：/rootfs/var/mobile/Library/Logs/systemPro.log
 static NSString *SPDiagPath(void) {
     return @"/var/mobile/Library/Logs/systemPro.log";
 }

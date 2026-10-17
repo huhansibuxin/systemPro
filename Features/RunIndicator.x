@@ -2,22 +2,24 @@
 // SystemX 原版语义（设置面板原文）：「当 APP 在前台运行时，APP 的名字会替换为一个指示点，
 // 代表当前 APP 正在运行中。」
 //
-// 实现要点（选择器均经 springboard-dump 核对；返回类型一律按最保守方式处理）：
-//  1) SBHIconManager -iconViewDisplaysLabel:  运行中的 App 不显示名称（BOOL，标准 delegate 签名）；
-//  2) 名称隐藏用 labelView.hidden（UIView 公开 API），不碰 setLabelHidden:（参数类型不明）；
-//  3) 圆点 10pt，颜色 = 电池充电绿（systemGreen #34C759，老板指定）；
-//  4) 只画在**真正位于图标列表里的图标视图**上（superview 链含 IconList/Dock）。
-//     ⚠️ 之前「App 缩回桌面 / 注销后出现两个大小不同的点」：过渡用的代理图标视图
-//     （跟随 App 快照缩放）也被我们加了点。现在用列表归属 + 专用 dot 类做双重防重。
-//  5) 位置：bounds 有效才摆 + layoutSubviews 只做位置校正（不跳动）；
-//  6) 运行判定：FBProcessManager processesForBundleIdentifier:（含后台挂起）；
-//  7) 刷新：进程事件 dispatch 主队列（FB call-out 是后台线程，直接动 UI 会 CA abort）。
+// 设计原则（老板要求：全部事件驱动、不许常驻占 CPU）：
+//   • 触发点只有两个：① 系统标签更新回调 iconViewDisplaysLabel:；② 进程启动/退出事件。
+//   • **不再 hook layoutSubviews**（那是每帧调用）。圆点位置交给 Auto Layout 约束，一次设定永久生效。
+//   • 无定时器、无轮询；运行判定只在上述事件里做一次 FBProcessManager 查询。
+//
+// 其它要点：
+//  1) 名称隐藏 = labelView.hidden（公开 API），不碰 setLabelHidden:（参数类型不明）；
+//  2) 圆点 8pt，颜色 = 电池充电绿（systemGreen #34C759）；
+//  3) 只画在真正位于图标列表里的图标视图上（superview 链含 IconList/Dock），排除过渡代理视图；
+//  4) 系统自带的小圆点 SBIconDotLabelAccessoryView（约 4-5pt）在功能开启时一律隐藏，
+//     避免「两个点、大小不一样」；
+//  5) 诊断日志 /var/mobile/Library/Preferences/systemPro.log（mobile 可写）。
 #import "../Common.h"
 #import "../PrivateHeaders.h"
 #import "../Prefs.h"
 #import <objc/runtime.h>
 
-// 专用圆点类：便于精确识别/清理我们自己的点，不会和系统视图混淆
+// 专用圆点类：便于精确识别/清理我们自己的点
 @interface SPRunDotView : UIView
 @end
 @implementation SPRunDotView
@@ -27,11 +29,10 @@ static const void *kSPDotKey       = &kSPDotKey;
 static const void *kSPHidLabelKey  = &kSPHidLabelKey;
 static NSHashTable *gSPIconViews   = nil;
 
-static const CGFloat SP_DOT_SIZE = 8.0;               // 直径 8pt（10pt 实测偏大，老板要求减 2pt）
+static const CGFloat SP_DOT_SIZE = 8.0;               // 直径 8pt（10pt 实测偏大，减 2pt）
 
-// 老板指定：指示点颜色 = 电池充电图标的绿色
 static UIColor *SPRunDotColor(void) {
-    return [UIColor systemGreenColor];
+    return [UIColor systemGreenColor];                // 老板指定：电池充电绿
 }
 
 static UIView *SPRunLabelView(SBIconView *iconView) {
@@ -52,23 +53,6 @@ static BOOL SPRunIconViewInList(SBIconView *iconView) {
     return NO;
 }
 
-// 摆圆点：图标还没布局（bounds 无效）就跳过，等 layoutSubviews 再摆
-static void SPRunDotPosition(SBIconView *iconView, UIView *dot) {
-    CGRect b = iconView.bounds;
-    if (b.size.width < 10.0 || b.size.height < 10.0) return;
-
-    CGFloat cx = b.size.width / 2.0;
-    CGFloat cy = b.size.height - 14.0;      // 名称行高度
-    UIView *lv = SPRunLabelView(iconView);
-    if (lv && !CGRectIsEmpty(lv.frame)) {
-        cx = CGRectGetMidX(lv.frame);
-        cy = CGRectGetMidY(lv.frame);
-    }
-    dot.frame = CGRectMake(round(cx - SP_DOT_SIZE / 2.0), round(cy - SP_DOT_SIZE / 2.0),
-                           SP_DOT_SIZE, SP_DOT_SIZE);
-}
-
-// 取图标的 bundleID（仅普通 App 图标；文件夹/小组件返回 nil）
 static NSString *SPRunIndicatorBundleID(SBIconView *iconView) {
     id icon = nil;
     @try { icon = [iconView valueForKey:@"icon"]; } @catch (NSException *e) { return nil; }
@@ -101,58 +85,78 @@ static BOOL SPRunIndicatorAppIsRunning(NSString *bid) {
 
 static BOOL SPRunIndicatorActiveForView(SBIconView *iconView) {
     if (!SPIsSpringBoard || !SPBool(kRunIndicatorEnabled)) return NO;
-    if (!SPRunIconViewInList(iconView)) return NO;              // 代理/过渡图标视图不加点
+    if (!SPRunIconViewInList(iconView)) return NO;
     return SPRunIndicatorAppIsRunning(SPRunIndicatorBundleID(iconView));
 }
 
-// 一次性诊断：记录图标视图上的「点状」子视图（类名/尺寸/是否隐藏），
-// 万一还有尺寸不一/双点，直接看 /var/mobile/Library/Logs/systemPro.log 就能定位是谁画的。
-static void SPRunDotDiag(SBIconView *iconView) {
-    static NSMutableSet *seen = nil;
+// 诊断：只在「状态签名」变化时记一条（不刷屏）。
+// 记录 apply 结束后的真实现场：superview、bounds、以及所有点状子视图的类名/尺寸/隐藏态。
+// 读法（SSH 真实根前缀）：/rootfs/var/mobile/Library/Logs/systemPro.log
+static void SPRunDotDiagState(SBIconView *iconView, NSString *phase) {
+    static NSMutableDictionary *lastSig = nil;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ seen = [NSMutableSet set]; });
-    NSString *key = [NSString stringWithFormat:@"%p", iconView];
-    @synchronized (seen) {
-        if ([seen containsObject:key]) return;
-        [seen addObject:key];
-    }
-    NSMutableString *line = [NSMutableString stringWithFormat:@"icon=%@ super=%@ bounds=%@ dots:",
+    dispatch_once(&once, ^{ lastSig = [NSMutableDictionary dictionary]; });
+
+    NSMutableString *line = [NSMutableString stringWithFormat:@"%@ icon=%@ super=%@ bounds=%@",
+                             phase,
                              NSStringFromClass([iconView class]),
-                             NSStringFromClass([iconView.superview class]),
+                             iconView.superview ? NSStringFromClass([iconView.superview class]) : @"(nil)",
                              NSStringFromCGRect(iconView.bounds)];
+    NSInteger n = 0;
     for (UIView *sv in iconView.subviews) {
         NSString *cn = NSStringFromClass([sv class]);
         if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] || [cn containsString:@"Accessory"]) {
-            [line appendFormat:@" [%@ %@%@]", cn, NSStringFromCGRect(sv.frame), sv.hidden ? @" hidden" : @""];
+            [line appendFormat:@" [%@ %@%@%@]", cn, NSStringFromCGRect(sv.frame),
+                               sv.hidden ? @" hidden" : @"", sv.superview == iconView ? @"" : @" detached"];
+            n++;
         }
+    }
+    NSString *sig = [NSString stringWithFormat:@"%@|%ld", line, (long)n];
+    NSString *key = [NSString stringWithFormat:@"%p", iconView];
+    @synchronized (lastSig) {
+        if ([lastSig[key] isEqualToString:sig]) return;
+        lastSig[key] = sig;
     }
     SPDiagLog(line);
 }
 
+// 把圆点装到图标视图上。位置交给 Auto Layout 约束：一次设定，layout 阶段零额外代码。
+static UIView *SPRunDotInstall(SBIconView *iconView) {
+    UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
+    if (!dot) {
+        dot = [SPRunDotView new];
+        dot.translatesAutoresizingMaskIntoConstraints = NO;
+        dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;
+        dot.backgroundColor = SPRunDotColor();
+        dot.userInteractionEnabled = NO;
+        objc_setAssociatedObject(iconView, kSPDotKey, dot, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (dot.superview != iconView) {
+        [iconView addSubview:dot];
+        [NSLayoutConstraint activateConstraints:@[
+            [dot.widthAnchor     constraintEqualToConstant:SP_DOT_SIZE],
+            [dot.heightAnchor    constraintEqualToConstant:SP_DOT_SIZE],
+            [dot.centerXAnchor   constraintEqualToAnchor:iconView.centerXAnchor],
+            [dot.bottomAnchor    constraintEqualToAnchor:iconView.bottomAnchor constant:-10.0],  // 名称行
+        ]];
+    }
+    [iconView bringSubviewToFront:dot];
+    return dot;
+}
+
 static void SPRunIndicatorApply(SBIconView *iconView) {
-    SPRunDotDiag(iconView);
     BOOL active = SPRunIndicatorActiveForView(iconView);
     UIView *dot = objc_getAssociatedObject(iconView, kSPDotKey);
     BOOL weHid = [objc_getAssociatedObject(iconView, kSPHidLabelKey) boolValue];
     UIView *labelView = SPRunLabelView(iconView);
 
-    // 防重：清掉除当前 dot 之外所有遗留的 SPRunDotView（图标视图复用/多路回调都不怕）
+    // 防重：清掉除当前 dot 外的遗留点
     for (UIView *sv in [iconView.subviews copy]) {
         if ([sv isKindOfClass:[SPRunDotView class]] && sv != dot) [sv removeFromSuperview];
     }
 
     if (active) {
-        if (!dot) {
-            dot = [SPRunDotView new];
-            dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;
-            dot.backgroundColor = SPRunDotColor();
-            dot.userInteractionEnabled = NO;
-            objc_setAssociatedObject(iconView, kSPDotKey, dot, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        SPRunDotPosition(iconView, dot);
-        if (dot.superview != iconView) [iconView addSubview:dot];
-        [iconView bringSubviewToFront:dot];
-
+        SPRunDotInstall(iconView);
         if (labelView) {
             labelView.hidden = YES;
             objc_setAssociatedObject(iconView, kSPHidLabelKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -165,8 +169,11 @@ static void SPRunIndicatorApply(SBIconView *iconView) {
 
     if (!gSPIconViews) gSPIconViews = [NSHashTable weakObjectsHashTable];
     [gSPIconViews addObject:iconView];
+
+    SPRunDotDiagState(iconView, active ? @"apply-on" : @"apply-off");
 }
 
+// 进程事件才刷新（事件驱动，零轮询）
 static void SPRunIndicatorRefreshVisible(void) {
     if (!SPBool(kRunIndicatorEnabled)) return;
     for (SBIconView *v in [gSPIconViews allObjects]) {
@@ -192,8 +199,8 @@ static void SPRunIndicatorScheduleRefresh(void) {
 
 #pragma mark - 钩子
 
-// 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带在这里维护圆点。
-// 只挂这一条 + 进程事件刷新（不再挂 didMoveToWindow：过渡代理视图也会被加点到）。
+// 系统问「这个图标要不要显示名称」——运行中的 App 不要；顺带维护圆点。
+// 这是唯一的常规触发点（每次标签更新都会走），无 layoutSubviews / 无定时器。
 %hook SBHIconManager
 - (BOOL)iconViewDisplaysLabel:(id)iconView {
     if ([iconView isKindOfClass:NSClassFromString(@"SBIconView")]) {
@@ -205,27 +212,7 @@ static void SPRunIndicatorScheduleRefresh(void) {
 }
 %end
 
-%hook SBIconView
-// 位置校正 + 补齐：SBIconView 的 _removeUnknownSubviews 会清掉非系统子视图，
-// 把我们的点删掉后就只剩系统那个小圆点（老板看到「大点变小点」就是这个）。
-// 这里发现点被摘掉就补回去（只有点存在时才做进程判定，开销可控）。
-- (void)layoutSubviews {
-    %orig;
-    UIView *dot = objc_getAssociatedObject(self, kSPDotKey);
-    if (!dot) return;
-    if (dot.superview != self) {
-        if (!SPRunIndicatorActiveForView(self)) return;   // 不该显示就不补
-        [self addSubview:dot];
-        [self bringSubviewToFront:dot];
-    }
-    dot.layer.cornerRadius = SP_DOT_SIZE / 2.0;   // 圆角始终跟尺寸一致
-    SPRunDotPosition(self, dot);
-}
-%end
-
-// 系统自带的「小圆点」label accessory（SBIconDotLabelAccessoryView，约 4-5pt）：
-// 隐藏图标名称后它有时会冒出来，和我们 8pt 的点并存 → 老板看到「两个点、大小还不一样」。
-// 本功能开启时一律隐藏系统圆点，只保留我们自己的绿点。
+// 系统自带的 label accessory 小圆点（约 4-5pt）：功能开启时一律隐藏，只留我们的 8pt 绿点
 %hook SBIconDotLabelAccessoryView
 - (void)didMoveToSuperview {
     %orig;
@@ -234,6 +221,15 @@ static void SPRunIndicatorScheduleRefresh(void) {
 - (void)layoutSubviews {
     %orig;
     if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
+}
+%end
+
+// 视图进入窗口时补一次（Dock / 新页面首次出现走这条路；代理视图被 SPRunIconViewInList 挡掉）。
+// 只在「进入窗口」这个事件里执行，不是每帧。
+%hook SBIconView
+- (void)didMoveToWindow {
+    %orig;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) SPRunIndicatorApply(self);
 }
 %end
 
