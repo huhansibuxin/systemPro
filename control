@@ -1,9 +1,8 @@
 Package: com.sytem.pro
 Name: systemPro
-Version: 1.0.0-15
+Version: 1.0.0-16
 Architecture: iphoneos-arm64e
-Description: systemPro — SpringBoard 功能增强套件（自研界面 · 手搓实现）
+Description: systemPro
 Maintainer: D
-Author: D
 Section: Tweaks
 Depends: mobilesubstrate, preferenceloader

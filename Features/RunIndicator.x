@@ -118,7 +118,8 @@ static UIView *SPRunDotInstall(SBIconView *iconView) {
 
         if (isDock) {
             [cs addObject:[dot.centerXAnchor constraintEqualToAnchor:iconView.centerXAnchor]];
-            [cs addObject:[dot.topAnchor constraintEqualToAnchor:iconView.bottomAnchor constant:2.0]];
+            // Dock 图标视图里全是图标本体 → 放在图标正下方（老板实测 +2 太贴近图标，调到 +4）
+            [cs addObject:[dot.topAnchor constraintEqualToAnchor:iconView.bottomAnchor constant:4.0]];
         } else if (labelView) {
             [cs addObject:[dot.centerXAnchor constraintEqualToAnchor:labelView.centerXAnchor]];
             [cs addObject:[dot.centerYAnchor constraintEqualToAnchor:labelView.centerYAnchor]];

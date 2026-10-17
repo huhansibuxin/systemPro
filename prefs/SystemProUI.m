@@ -17,14 +17,11 @@
 extern char **environ;
 extern int notify_post(const char *name);
 
-#pragma mark - 数据模型
+#pragma mark - 数据模型（只保留功能性行：开关 / 数值）
+
 typedef NS_ENUM(NSInteger, SPRowKind) {
     SPRowKindSwitch = 0,
-    SPRowKindText,
-    SPRowKindButton,
-    SPRowKindInfo,
-    SPRowKindLink,
-    SPRowKindSlider,
+    SPRowKindText,      // 数值/文本行：点开进入编辑子页
 };
 
 @interface SPRow : NSObject
@@ -36,10 +33,6 @@ typedef NS_ENUM(NSInteger, SPRowKind) {
 @property (nonatomic, strong) UIColor *tint;
 @property (nonatomic, copy) NSString *defValue;
 @property (nonatomic) BOOL numeric;
-@property (nonatomic) BOOL destructive;
-@property (nonatomic, copy) NSString *actionName;
-@property (nonatomic) double minValue;       // SPRowKindSlider
-@property (nonatomic) double maxValue;
 @end
 
 @implementation SPRow
@@ -79,7 +72,8 @@ static void SPPrefsWrite(NSString *key, id value) {
     notify_post(SP_NOTIFY_RELOAD);
 }
 
-#pragma mark - 通用单元格
+#pragma mark - 通用单元格（只支持 开关行 / 数值行）
+
 @interface SPCell : UITableViewCell
 @property (nonatomic, strong) UIView *chip;
 @property (nonatomic, strong) UIImageView *rowIcon;
@@ -88,18 +82,12 @@ static void SPPrefsWrite(NSString *key, id value) {
 @property (nonatomic, strong) UISwitch *toggle;
 @property (nonatomic, strong) UILabel *valueLabel;
 @property (nonatomic, strong) UIImageView *chevron;
-@property (nonatomic, strong) UISlider *slider;
-@property (nonatomic, strong) NSLayoutConstraint *titleToToggle;
-@property (nonatomic, strong) NSLayoutConstraint *titleToSlider;
 @property (nonatomic, copy) void (^onToggle)(BOOL on);
-@property (nonatomic, copy) void (^onSlider)(double v);
-@property (nonatomic, strong) NSLayoutConstraint *subZero;
 @end
 
 @implementation SPCell
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier {
     if ((self = [super initWithStyle:style reuseIdentifier:reuseIdentifier])) {
-        // 卡片底色显式指定（insetGrouped 下部分行缺省透明会呈灰）
         self.backgroundColor = [UIColor secondarySystemGroupedBackgroundColor];
 
         _chip = [UIView new];
@@ -139,19 +127,13 @@ static void SPPrefsWrite(NSString *key, id value) {
                 [UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightSemibold]]];
         _chevron.tintColor = [UIColor tertiaryLabelColor];
         [self.contentView addSubview:_chevron];
-
-        _slider = [UISlider new];
-        _slider.minimumTrackTintColor = _toggle.onTintColor;
-        _slider.hidden = YES;
-        [_slider addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
-        [self.contentView addSubview:_slider];
     }
     return self;
 }
 
 // ============================================================
 // 手工 frame 布局（不用 Auto Layout）
-// 原因：insetGrouped + 自适应高度下约束会解不开，开关被挤出卡片右侧，
+// 原因：insetGrouped + 自适应高度下约束解不开，开关会被挤出卡片右侧，
 // 超出 cell 边界后 hitTest 收不到触摸 —— 表现为「布局错乱 + 开关点不开」。
 // ============================================================
 + (CGFloat)textHeight:(NSString *)text font:(UIFont *)font width:(CGFloat)width {
@@ -164,9 +146,7 @@ static void SPPrefsWrite(NSString *key, id value) {
 
 // 控制器算行高：给定卡片宽度，返回该行需要的高度
 + (CGFloat)heightForRow:(SPRow *)row cardWidth:(CGFloat)cardWidth {
-    CGFloat accessW = 0;
-    if (row.kind == SPRowKindSwitch)      accessW = 51.0 + 8.0;
-    else if (row.kind == SPRowKindSlider) accessW = 140.0 + 8.0 + 44.0 + 8.0;
+    CGFloat accessW = (row.kind == SPRowKindSwitch) ? (51.0 + 8.0) : 0.0;
     CGFloat textW = MAX(80.0, cardWidth - 16.0 - 26.0 - 12.0 - 16.0 - accessW);
     CGFloat h = [self textHeight:row.title font:[UIFont systemFontOfSize:16] width:textW];
     if (row.subtitle.length) {
@@ -181,15 +161,10 @@ static void SPPrefsWrite(NSString *key, id value) {
     CGFloat H = self.contentView.bounds.size.height;
     const CGFloat padL = 16.0, padR = 16.0, chipS = 26.0, gap = 12.0;
 
-    // 左侧图标块
     self.chip.frame = CGRectMake(padL, (H - chipS) / 2.0, chipS, chipS);
     self.rowIcon.frame = self.chip.bounds;
 
-    // 右侧控件占位
-    CGFloat accessW = 0;
-    if (!self.toggle.hidden)      accessW = 51.0 + 8.0;
-    else if (!self.slider.hidden) accessW = 140.0 + 8.0 + 44.0 + 8.0;
-
+    CGFloat accessW = self.toggle.hidden ? 0.0 : (51.0 + 8.0);
     CGFloat textX = padL + chipS + gap;
     CGFloat textW = MAX(80.0, W - textX - padR - accessW);
 
@@ -202,12 +177,12 @@ static void SPPrefsWrite(NSString *key, id value) {
     self.titleLabel.frame = CGRectMake(textX, y, textW, titleH);
     self.subLabel.frame   = CGRectMake(textX, y + titleH + (subH > 0 ? 1.0 : 0.0), textW, subH);
 
-    // 开关：永远贴在卡片右侧内边距里（不会越界）
+    // 开关：永远贴卡片右侧内边距（不会越界）
     if (!self.toggle.hidden) {
         self.toggle.frame = CGRectMake(W - padR - 51.0, (H - 31.0) / 2.0, 51.0, 31.0);
     }
 
-    // 右侧数值 + 箭头（右对齐）
+    // 数值 + 箭头（右对齐）
     CGFloat rightX = W - padR;
     if (!self.chevron.hidden) {
         self.chevron.frame = CGRectMake(rightX - 8.0, (H - 13.0) / 2.0, 8.0, 13.0);
@@ -216,20 +191,13 @@ static void SPPrefsWrite(NSString *key, id value) {
     if (!self.valueLabel.hidden) {
         CGFloat vw = MIN(200.0, MAX(40.0, rightX - textX - 8.0));
         self.valueLabel.frame = CGRectMake(rightX - vw, (H - 20.0) / 2.0, vw, 20.0);
-        rightX -= (vw + 8.0);
-    }
-    if (!self.slider.hidden) {
-        self.slider.frame = CGRectMake(MAX(textX, rightX - 140.0), (H - 31.0) / 2.0, 140.0, 31.0);
     }
 }
 
 - (void)toggleChanged:(UISwitch *)sw {
     if (self.onToggle) self.onToggle(sw.isOn);
 }
-- (void)sliderChanged:(UISlider *)s {
-    self.valueLabel.text = [NSString stringWithFormat:@"%.0f", s.value];
-    if (self.onSlider) self.onSlider(round(s.value));
-}
+
 - (void)configureWithRow:(SPRow *)row value:(id)value {
     self.chip.backgroundColor = row.tint;
     self.rowIcon.image = [UIImage systemImageNamed:row.icon withConfiguration:
@@ -238,38 +206,18 @@ static void SPPrefsWrite(NSString *key, id value) {
     self.subLabel.text = row.subtitle;
     BOOL hasSub = (row.subtitle.length > 0);
     self.subLabel.hidden = !hasSub;
-    self.subZero.active = !hasSub;
 
     BOOL isSwitch = (row.kind == SPRowKindSwitch);
-    BOOL isText   = (row.kind == SPRowKindText);
-    BOOL isInfo   = (row.kind == SPRowKindInfo);
-    BOOL isButton = (row.kind == SPRowKindButton);
-    BOOL isLink   = (row.kind == SPRowKindLink);
-    BOOL isSlider = (row.kind == SPRowKindSlider);
-
-    self.toggle.hidden = !isSwitch;
-    self.valueLabel.hidden = !(isText || isInfo || isSlider);
-    self.chevron.hidden = !(isText || isLink);
-    self.slider.hidden = !isSlider;
-    self.titleToToggle.active = !isSlider;
-    self.titleToSlider.active = isSlider;
-    if (isSlider) {
-        self.slider.minimumValue = (float)row.minValue;
-        self.slider.maximumValue = (float)row.maxValue;
-        double v = value ? [value doubleValue] : [row.defValue doubleValue];
-        self.slider.value = (float)v;
-        self.valueLabel.text = [NSString stringWithFormat:@"%.0f", v];
-    }
-    self.selectionStyle = (isText || isButton || isLink) ? UITableViewCellSelectionStyleDefault : UITableViewCellSelectionStyleNone;
-    self.titleLabel.textColor = row.destructive ? [UIColor systemRedColor] : [UIColor labelColor];
+    self.toggle.hidden     = !isSwitch;
+    self.valueLabel.hidden = isSwitch;
+    self.chevron.hidden    = isSwitch;
+    self.selectionStyle = isSwitch ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
 
     if (isSwitch) {
         self.toggle.on = [value boolValue];
-    } else if (isText) {
+    } else {
         NSString *s = value ? [value description] : (row.defValue ?: @"");
         self.valueLabel.text = s.length ? s : @"默认";
-    } else if (isInfo) {
-        self.valueLabel.text = [value description];
     }
 }
 @end
@@ -418,9 +366,7 @@ static void SPPrefsWrite(NSString *key, id value) {
         for (SPRow *row in sec.rows) {
             PSCellType ct = PSStaticTextCell;
             if (row.kind == SPRowKindSwitch)      ct = PSSwitchCell;
-            else if (row.kind == SPRowKindButton) ct = PSButtonCell;
             else if (row.kind == SPRowKindText)   ct = PSLinkCell;
-            else if (row.kind == SPRowKindLink)   ct = PSLinkCell;
 
             PSSpecifier *sp = nil;
             if ([PSSpecifier respondsToSelector:@selector(preferenceSpecifierNamed:target:set:get:detail:cell:edit:)]) {
@@ -563,11 +509,7 @@ static void SPPrefsWrite(NSString *key, id value) {
             [self sw:kHideIconDeleteMenu title:@"长按菜单隐藏删除" sub:@"长按 App 的菜单里去掉「删除 App」，其它项保留" icon:@"trash.slash.fill" tint:red],
         ]];
 
-    SPRow *au = [SPRow kind:SPRowKindInfo key:nil title:@"作者" subtitle:nil icon:@"person" tint:[UIColor systemGrayColor]];
-    au.defValue = @"D";
-    SPSection *about = [self section:@"关于" footer:nil rows:@[au]];
-
-    self.model = [@[main, about] mutableCopy];
+    self.model = [@[main] mutableCopy];
 }
 
 #pragma mark - 表格数据源 / 交互（分节与行序由框架 specifier 模型负责）
@@ -581,7 +523,7 @@ static void SPPrefsWrite(NSString *key, id value) {
     if (!cell) {
         cell = [[SPCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"cell"];
     }
-    id value = (row.kind == SPRowKindInfo) ? row.defValue : self.prefs[row.key];
+    id value = self.prefs[row.key];
     [cell configureWithRow:row value:value];
     __weak typeof(self) weakSelf = self;
     if (row.kind == SPRowKindSwitch) {
@@ -590,13 +532,6 @@ static void SPPrefsWrite(NSString *key, id value) {
         };
     } else {
         cell.onToggle = nil;
-    }
-    if (row.kind == SPRowKindSlider) {
-        cell.onSlider = ^(double v) {
-            [weakSelf setPref:row.key value:[NSString stringWithFormat:@"%.0f", v] row:row];
-        };
-    } else {
-        cell.onSlider = nil;
     }
     return cell;
 }
@@ -629,20 +564,7 @@ static void SPPrefsWrite(NSString *key, id value) {
     UIImpactFeedbackGenerator *h = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     [h impactOccurred];
 
-    if (row.kind != SPRowKindSlider) [self.contentTable reloadData]; // 拖动滑块时不整表刷新
+    [self.contentTable reloadData];
 }
 
-// 原生弹窗提示（替代自绘 toast）
-- (void)showToast:(NSString *)text {
-    if (self.presentedViewController) return; // 避免重复 present
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:nil
-                                                              message:text
-                                                       preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:a animated:YES completion:nil];
-}
-
-#pragma mark - 注销（二次确认 + 多路降级 + 失败提示）
-// 收集所有可能藏工具的 bin 目录：rootless /var/jb、老式 /usr、roothide jbroot(.jbroot-*)
-#pragma mark - 恢复默认（二次确认）
 @end
