@@ -97,16 +97,20 @@ static void SPRunDotDiagState(SBIconView *iconView, NSString *phase) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{ lastSig = [NSMutableDictionary dictionary]; });
 
-    NSMutableString *line = [NSMutableString stringWithFormat:@"%@ icon=%@ super=%@ bounds=%@",
+    NSMutableString *line = [NSMutableString stringWithFormat:@"%@ icon=%@ super=%@ bounds=%@ tf=%@",
                              phase,
                              NSStringFromClass([iconView class]),
                              iconView.superview ? NSStringFromClass([iconView.superview class]) : @"(nil)",
-                             NSStringFromCGRect(iconView.bounds)];
+                             NSStringFromCGRect(iconView.bounds),
+                             NSStringFromCGAffineTransform(iconView.transform)];
     NSInteger n = 0;
     for (UIView *sv in iconView.subviews) {
         NSString *cn = NSStringFromClass([sv class]);
-        if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] || [cn containsString:@"Accessory"]) {
-            [line appendFormat:@" [%@ %@%@%@]", cn, NSStringFromCGRect(sv.frame),
+        CGRect f = sv.frame;
+        BOOL small = (f.size.width > 0 && f.size.width <= 14.0) || (f.size.height > 0 && f.size.height <= 14.0);
+        if ([sv isKindOfClass:[SPRunDotView class]] || [cn containsString:@"Dot"] ||
+            [cn containsString:@"Accessory"] || small) {
+            [line appendFormat:@" [%@ %@%@%@]", cn, NSStringFromCGRect(f),
                                sv.hidden ? @" hidden" : @"", sv.superview == iconView ? @"" : @" detached"];
             n++;
         }
@@ -216,7 +220,15 @@ static void SPRunIndicatorScheduleRefresh(void) {
 %hook SBIconDotLabelAccessoryView
 - (void)didMoveToSuperview {
     %orig;
-    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) self.hidden = YES;
+    if (SPIsSpringBoard && SPBool(kRunIndicatorEnabled)) {
+        self.hidden = YES;
+        static int logs = 0;
+        if (logs < 15) {
+            logs++;
+            SPDiagLog([NSString stringWithFormat:@"accessory hidden super=%@ frame=%@",
+                       NSStringFromClass([self.superview class]), NSStringFromCGRect(self.frame)]);
+        }
+    }
 }
 - (void)layoutSubviews {
     %orig;
